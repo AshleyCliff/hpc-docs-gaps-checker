@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "note": "Resolved SHAs for the last --freeze. Commit this.",
+  "repos": [
+    {
+      "name": "docs",
+      "repo": "canonical/charmed-hpc-docs",
+      "kind": "docs",
+      "sha": "ee09c39e77bc42e830d31427df535e61f7608ef8"
+    },
+    {
+      "name": "slurm-charms",
+      "repo": "canonical/slurm-charms",
+      "kind": "charm-monorepo",
+      "sha": "cf74cd08109b8e31a251e9152a59093772a31cb2"
+    },
+    {
+      "name": "filesystem-charms",
+      "repo": "canonical/filesystem-charms",
+      "kind": "charm-monorepo",
+      "sha": "2db19f2ecbfc7b71b9f8d81956db520f389d8d6c"
+    },
+    {
+      "name": "sssd-operator",
+      "repo": "canonical/sssd-operator",
+      "kind": "charm",
+      "sha": "33ba6eac7ebb43db1b06d184345c20d1618f66e1"
+    },
+    {
+      "name": "apptainer-operator",
+      "repo": "canonical/apptainer-operator",
+      "kind": "charm",
+      "sha": "30441f1bfe0bd8c1ad8c4bdc62e33319ada926a4"
+    },
+    {
+      "name": "slurmutils",
+      "repo": "canonical/slurmutils",
+      "kind": "library",
+      "sha": "545c15cbff7ce21dffa95b2d968a5dac29cf5b58"
+    },
+    {
+      "name": "charmed-hpc-libs",
+      "repo": "canonical/charmed-hpc-libs",
+      "kind": "library",
+      "sha": "bb3fbab047556728d3c3b509c8311ec7f7b1d2e4"
+    },
+    {
+      "name": "charmed-hpc-terraform",
+      "repo": "canonical/charmed-hpc-terraform",
+      "kind": "terraform",
+      "sha": "74094c247541b4eaad16e98e336a79c27bbd39e6"
+    }
+  ]
+}

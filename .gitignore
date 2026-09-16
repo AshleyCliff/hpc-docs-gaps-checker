@@ -1,0 +1,15 @@
+# Workshop writes this on launch. Per Workshop's docs it must stay in the
+# project directory and must not be copied or stored externally.
+.workshop.lock
+.workshop/*.lock
+
+# Note: manifest.lock IS tracked - it records the resolved SHAs for a run.
+# Do not add a broad *.lock rule here.
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# The inputs tree lives outside this repo by design, so it needs no entry
+# here. See "Layout" in AGENTS.md.

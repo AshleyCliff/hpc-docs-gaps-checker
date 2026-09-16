@@ -1,0 +1,36 @@
+name: docs-audit
+base: ubuntu@24.04
+
+sdks:
+  # uv owns the mount plug only because a plug cannot be declared on the
+  # `system` SDK. See "Workshop" in AGENTS.md.
+  - name: uv
+    plugs:
+      inputs-plug:
+        interface: mount
+        workshop-target: /inputs
+        read-only: true
+
+actions:
+  # Host path is bound separately; see "Binding the host path" in AGENTS.md.
+  sync: |
+    ./extractors/sync.py --manifest manifest.yaml --dest /inputs --freeze
+
+  extract: |
+    ./extractors/code_facts.py /inputs/repos > findings/code-facts.json
+    ./extractors/doc_claims.py /inputs/repos/docs > findings/doc-claims.json
+    ./extractors/diff.py findings/code-facts.json findings/doc-claims.json \
+      > findings/deltas.json
+
+  report: |
+    ./extractors/render.py findings/ > findings/report.md
+    ./extractors/assert_clean.py /inputs/repos
+
+  # Fails if the mount is missing or empty, which otherwise looks like
+  # "no findings" rather than a broken run.
+  check-mount: |
+    test -d /inputs/repos || { echo "FAIL: /inputs/repos absent - remount?"; exit 1; }
+    count=$(find /inputs/repos -mindepth 1 -maxdepth 1 -type d | wc -l)
+    test "$count" -gt 0 || { echo "FAIL: /inputs/repos empty - remount?"; exit 1; }
+    echo "OK: $count repo(s) at /inputs/repos"
+    test -w /inputs && echo "WARN: /inputs is writable" || echo "OK: /inputs read-only"
