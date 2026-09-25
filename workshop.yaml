@@ -11,10 +11,21 @@ sdks:
         workshop-target: /inputs
         read-only: true
 
+  - name: opencode
+    channel: latest/stable
+    plugs:
+        openrouter:
+          interface: tunnel
+          endpoint: localhost:8317
+  - name: system
+    slots:
+      openrouter:
+        interface: tunnel
+        endpoint: localhost:8317
+
 actions:
-  # Host path is bound separately; see "Binding the host path" in AGENTS.md.
-  sync: |
-    ./extractors/sync.py --manifest manifest.yaml --dest /inputs --freeze
+  # NOTE: sync is host-only. It creates and chmod a-w's the inputs tree, which
+  # this container sees read-only. Run `extractors/sync.py --freeze` on the host.
 
   extract: |
     ./extractors/code_facts.py /inputs/repos > findings/code-facts.json
@@ -22,9 +33,10 @@ actions:
     ./extractors/diff.py findings/code-facts.json findings/doc-claims.json \
       > findings/deltas.json
 
+  # assert_clean.py takes the inputs tree root and appends repos/ itself.
   report: |
     ./extractors/render.py findings/ > findings/report.md
-    ./extractors/assert_clean.py /inputs/repos
+    ./extractors/assert_clean.py /inputs
 
   # Fails if the mount is missing or empty, which otherwise looks like
   # "no findings" rather than a broken run.
@@ -34,3 +46,5 @@ actions:
     test "$count" -gt 0 || { echo "FAIL: /inputs/repos empty - remount?"; exit 1; }
     echo "OK: $count repo(s) at /inputs/repos"
     test -w /inputs && echo "WARN: /inputs is writable" || echo "OK: /inputs read-only"
+
+  agent: opencode run "$@"

@@ -95,6 +95,10 @@ These are not style preferences. Breaking one defeats the purpose of the repo.
    narrow the check until the output looks clean.
 9. **Record new blind spots in `COVERAGE-LIMITS.md`** in the same change that
    creates them. An undocumented gap is indistinguishable from a bug.
+10. **Never put the API key in a file.** It lives in the host shell environment and
+    reaches the model through `openrouter-proxy.py` only. `opencode.json` is
+    committed and must keep `apiKey: "none"`. See
+    [Model access](#model-access-the-host-proxy).
 
 ---
 
@@ -122,7 +126,10 @@ hpc-docs-gaps-checker/             # this repo - the ONLY writable tree
 ├── AGENTS.md
 ├── COVERAGE-LIMITS.md             # known blind spots - keep current
 ├── manifest.yaml                  # pinned SHAs; the reproducibility anchor
+├── manifest.lock                  # resolved SHAs from the last --freeze; committed
 ├── workshop.yaml
+├── opencode.json                  # points OpenCode at the host proxy; no key in it
+├── openrouter-proxy.py            # HOST-only; holds the key, injects the header
 ├── extractors/
 │   ├── sync.py                    # clone, resolve SHAs, chmod -R a-w
 │   ├── assert_clean.py            # post-run read-only assertion
@@ -267,6 +274,37 @@ What is settled is the shape every extractor must fit:
 When adding one, prefer boring and complete over clever and partial, and record any
 new blind spot in `COVERAGE-LIMITS.md` in the same change.
 
+### What a survey of the pinned inputs established
+
+Ground truth from the frozen tree, useful for designing the first check. Re-verify
+rather than trust these if the pins have moved.
+
+`slurm-charms`, all declared **inline** in `charmcraft.yaml` — there is no external
+`config.yaml` or `actions.yaml` to chase:
+
+| Charm | Config options | Actions |
+|---|---|---|
+| `sackd` | none | none |
+| `slurmctld` | 5 | 4 |
+| `slurmd` | 3 | 1 |
+| `slurmdbd` | 1 | none |
+| `slurmrestd` | none | none |
+
+Thirteen `charmcraft.yaml` files exist across all repos. One of them,
+`filesystem-charms/charms/test-mount-client/`, looks like a test fixture rather than a
+published charm — treating every `charmcraft.yaml` as documentable will report it as an
+undocumented charm. Decide that deliberately and record the choice.
+
+On the docs side, `reference/underlying-projects-and-dependencies.md` does contain a
+`charm, configuration options, actions` `csv-table`, but **its cells are links to
+Charmhub, not option names.** So it cannot be diffed against `charmcraft.yaml`
+content — only against whether options exist per charm at all. It also makes an
+explicit, falsifiable claim worth checking: "A charm does not have any modifiable
+configuration options or runnable actions if a table cell below is blank."
+
+The consequence for extractor design: because the docs carry little option-level
+reference content, the dominant gap class is **absence**, not disagreement.
+
 ---
 
 ## The LLM layer
@@ -312,31 +350,69 @@ eight repos, extractor version, model name, and prompt hash.
 
 ## Environments
 
-| Environment | Role |
+**Work happens in the workshop.** The host is only for what the workshop cannot
+do. This is a boundary, not a preference — see [Why](#why-the-work-happens-inside)
+below.
+
+| Task | Where |
 |---|---|
-| Zed agent on host, read-only clones | **Iteration** — building and tuning extractors, triaging findings |
-| Workshop (LXD), CLI agents inside | **Full sweeps** — unattended runs, and CI |
+| `sync.py --freeze` | **Host only.** It creates and `chmod a-w`s the inputs tree, which the container sees read-only. It cannot run inside. |
+| `workshop launch` / `stop` / `remount` / `start` | **Host only.** A workshop cannot manage its own container from inside itself. |
+| Everything else — extractors, tests, edits to this repo, surveys, triage | **Workshop.** |
 
-Both share one `manifest.yaml`, one set of extractors, and one findings schema.
-This is not two systems to maintain.
+### Why the work happens inside
 
-Workshop is pre-1.0 and its IDE integrations cover VS Code and JetBrains Gateway —
-**not Zed**. **Edit on the host, execute in the workshop.** Do not plan to edit
-inside it.
+The container is the boundary, so any activity that could be influenced by
+untrusted input belongs behind it. That includes **editing**, not just executing:
+an agent that has read third-party repo content and holds host write access is the
+exposure, whichever verb it is performing. Splitting "writing" from "running" does
+not work in practice either, because building an extractor means running it against
+real input every few minutes.
 
-Agent safeguards are disabled inside the workshop
-(`--dangerously-skip-permissions`, `--yolo`) precisely *because* the container plus
-read-only mounts are the boundary. **Do not replicate that flag style when running
+The simple form of the rule: **the inputs tree is only ever touched from inside the
+container.** One rule about one directory, rather than a taxonomy of activities that
+has to be classified correctly every time.
+
+A consequence worth stating plainly: extractor output is *derived from* untrusted
+input, so reading a parser's results is also an ingestion path. Keeping the editor
+on the host would not prevent that.
+
+### How agents run
+
+**OpenCode** is installed as an SDK, and implementation work is handed to an agent
+running **inside** the workshop, via the `agent` action:
+
+```console
+$ workshop run docs-audit -- agent 'build the first doc_claims.py check'
+```
+
+A host-side agent coordinates: it edits nothing under the inputs tree, and defers
+work that reads inputs to the container.
+
+Workshop's IDE integrations cover VS Code and JetBrains Gateway — **not Zed** — so
+Zed cannot attach to the container directly. That is why the in-container work is
+done by a CLI agent rather than by editing through Zed.
+
+Both environments share one `manifest.yaml`, one set of extractors, and one findings
+schema. This is not two systems to maintain.
+
+The project directory is mounted writable at `/project`, and actions are interpreted
+lazily, so an edit is picked up by the next `workshop run` with no refresh step.
+
+Agent safeguards are disabled inside the workshop precisely *because* the container
+plus read-only mounts are the boundary. **Do not replicate that posture when running
 agents on the host.**
 
 Network needs, by action. **This table is documentation, not enforcement** — see
-[Workshop](#workshop) below:
+[Workshop does not restrict network access](#workshop-does-not-restrict-network-access)
+below:
 
 | Action | Network needed |
 |---|---|
-| `sync` | GitHub |
+| `sync.py --freeze` (host) | GitHub |
+| `check-mount` | none |
 | `extract` | **none** |
-| `audit` | model API only |
+| `agent` | the host proxy only, via the `openrouter` tunnel |
 | `report` | none |
 
 ---
@@ -358,9 +434,11 @@ Two constraints that are easy to get wrong:
    explicit: "Plug owner: any regular SDK; not the system SDK." `system` is the wall
    socket; you cannot plug it into itself. An earlier draft of this design put the
    plug on `system` — that is wrong and will not work.
-2. **Which regular SDK owns it is bookkeeping, not meaning.** `uv` holds the plug
-   because it is the only SDK installed and the extractors are Python. There is no
-   real relationship between a Python toolchain and a documentation mount.
+2. **Which regular SDK owns it is bookkeeping, not meaning.** `uv` holds the mount
+   plug because the extractors are Python; `opencode` holds the tunnel plug because
+   it is the thing that calls the model. Neither pairing means anything to Workshop
+   — there is no real relationship between a Python toolchain and a documentation
+   mount. Keep each plug on the SDK that uses it, for legibility only.
 
 The plug is named `inputs-plug` rather than `inputs`. Slightly redundant — anything
 under `plugs:` is a plug — but it appears bare in YAML beside real Workshop keywords
@@ -398,24 +476,100 @@ the scratch directory.
 kernel-enforced: "Writes to [the target] from inside the workshop fail even with
 `sudo`." This is layer 2 of [Read-only enforcement](#read-only-enforcement).
 
+Verified against this setup: a write to `/inputs/repos/` fails as a normal user
+**and** under `sudo`, and the error is `Read-only file system` rather than
+`Permission denied`. That distinction matters — it is the mount refusing the write,
+not the permission bits. Layers 1 and 2 are genuinely independent mechanisms, so
+neither being defeated implies the other is.
+
+A consequence for `sync.py`: it cannot run inside the container, because the tree it
+must write to and freeze is exactly the tree the container sees read-only. `sync` is
+therefore not an action in `workshop.yaml`, and there is a comment there saying so.
+
 **It constrains processes inside the container only.** An agent running on the host
 — including the Zed agent — is outside that boundary entirely and has your user's
 full filesystem rights. Workshop documents no mechanism that changes this. That is
 why layer 1 (`chmod -R a-w`) is "the layer that actually matters" and why layer 3
 (`assert_clean.py`) is load-bearing rather than decorative.
 
+### Model access: the host proxy
+
+The in-container agent reaches its model through a **tunnel** to a proxy on the
+host, not by talking to the provider directly. `openrouter-proxy.py` listens on
+`127.0.0.1:8317`, holds `WORKSHOP_OPENROUTER_API_KEY` from the host shell, and
+injects the `Authorization` header itself. `opencode.json` points OpenCode at
+`http://127.0.0.1:8317/api/v1` as a generic OpenAI-compatible provider with
+`apiKey: "none"`.
+
+**The point is that the key is never inside the container** — not in a config file,
+and not transiently in a process environment either. The alternative,
+`workshop exec --env OPENROUTER_API_KEY`, does put the key in the container's
+environment for the duration of the command, where a misbehaving agent could read
+`/proc/self/environ`. This process reads seven repositories of third-party content
+(invariant 7), so that residual trust is not one to take. **Use the proxy; do not
+fall back to `--env`.**
+
+Two consequences worth knowing:
+
+- **`openrouter-proxy.py` is host-only**, and must be running before any `agent`
+  action. It lives in this repo for versioning, not to be executed inside.
+- **Redirect its output and `disown` it.** It logs every request to stderr, which
+  otherwise lands on your shell prompt, and a bare `&` job dies when the terminal
+  closes. It also reads the key once at startup, so **restart it after any key
+  change** and check the fingerprint line to confirm which key it loaded.
+- **The key must never be written to `opencode.json`.** That file is committed;
+  `apiKey: "none"` is correct and deliberate.
+
+The tunnel plug is on `opencode` and the slot on `system`, which means Workshop
+does **not** auto-connect it. Wire it explicitly, once per workshop:
+
+```console
+$ workshop connect docs-audit/opencode:openrouter docs-audit/system:openrouter
+$ workshop connections      # the tunnel row should read `manual`
+```
+
+Cost is a real operating concern for an unattended audit: set a spend limit on the
+OpenRouter key, and check `workshop exec -- opencode stats` after a sweep. Note also
+that OpenCode uses a second, cheaper model to title sessions; it appears on the bill
+and is not a bug — it is why a trivial prompt still logs a `build · <model>` line.
+
+Verified working end to end: `workshop run docs-audit -- agent '<prompt>'` reaches the
+model and returns a reply. Arguments reach OpenCode via `"$@"`, and `opencode.json` is
+picked up from `/project` without `OPENCODE_CONFIG` being set.
+
 ### Workshop does not restrict network access
 
-There is **no egress restriction, per-action or otherwise.** The definition format
-accepts exactly five top-level fields — `name`, `base`, `sdks`, `connections`,
-`actions` — with `additionalProperties: false`, and an action's value is a bare
-string. Per-action network scoping is not expressible.
+There is **no egress restriction in Workshop itself, per-action or otherwise.** The
+definition format accepts exactly five top-level fields — `name`, `base`, `sdks`,
+`connections`, `actions` — with `additionalProperties: false`, and an action's value
+is a bare string. Per-action network scoping is not expressible.
 
 The network table under [Environments](#environments) records what each stage
-*needs*, which is useful for review and for CI design. It is not a control. A
-workshop is a filesystem and capability sandbox, not a network sandbox. Enforcing
-egress limits would mean configuring the LXD network directly, which Workshop does
-not document.
+*needs*, which is useful for review and for CI design. **It is not a control.** A
+workshop is a filesystem and capability sandbox, not a network sandbox.
+
+Egress *can* be dropped, but one layer down, at LXD — not by Workshop, and not per
+action. Because the model arrives through the tunnel, the container needs no
+internet of its own, so this is available rather than theoretical:
+
+```console
+$ lxc network acl create offline
+$ lxc network set workshopbr0 security.acls=offline \
+    security.acls.default.egress.action=drop
+```
+
+The block is enforced on the host, so nothing inside the container can lift it, and
+it survives `stop`, `start`, and `workshop refresh`. Two caveats: it applies to
+**every** workshop on the shared `workshopbr0` bridge, and it must be lifted before
+a `sync` refresh if you ever clone from inside — which you should not, since `sync`
+is host-only. Undo with `lxc network unset workshopbr0 security.acls` and
+`... security.acls.default.egress.action`.
+
+This is **not** currently part of the required setup. It is recorded because it is
+the only mechanism that turns the `extract` row of the network table from a
+statement of intent into an enforced property, and because it does not stop prompts
+and extracted facts from reaching the model provider — that egress is the deal this
+design accepts by using a hosted model at all.
 
 ### Environment prerequisites
 
@@ -434,6 +588,25 @@ out of the desktop session or reboot.
 
 Workshop provisions its own ZFS storage pool, named `workshop`. `lxd init` is not
 mentioned in Workshop's documentation and appears not to be required.
+
+For the `agent` action, the host also needs `WORKSHOP_OPENROUTER_API_KEY` exported
+in the shell that starts `openrouter-proxy.py` — **a key with a spend limit set on
+it.** The key belongs in the shell environment and nowhere else; see
+[Model access](#model-access-the-host-proxy).
+
+**Deliberately not `OPENROUTER_API_KEY`.** Zed reads that name for its own model
+access, so sharing it means one tool's key silently overrides the other's. A
+separate variable also keeps per-key spend limits attributable: audit spend and
+editor spend stay on different keys.
+
+Start-of-session order on the host:
+
+```console
+$ ./extractors/sync.py --freeze              # refresh and re-freeze the inputs tree
+$ ./openrouter-proxy.py > /tmp/proxy.log 2>&1 & disown
+$ head -1 /tmp/proxy.log                     # check the key fingerprint
+$ workshop start docs-audit
+```
 
 ---
 
@@ -483,3 +656,34 @@ as human-reviewed advice.
 - **Cite `file:line`, always.**
 - Zed reads `.agents/skills/`; Claude Code reads `.claude/skills/`. Symlink one to
   the other so host and container agents share one copy of the methodology.
+
+---
+
+## Commit messages
+
+Follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/),
+and **keep messages brief.**
+
+```
+<type>: <short description>
+
+<optional body, wrapped at 72 characters, only if it adds something the
+description does not>
+
+Assisted-by: <model name and version>
+```
+
+Types in use here: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
+
+The `Assisted-by:` trailer is required on any commit an agent helped produce.
+It is an audit record, so accuracy matters more than convenience:
+
+- **Take the model string from the user's model selector, not from the model's own
+  claim about itself.** A model cannot reliably introspect its own version, and one
+  has already misreported it once in this repo. If you are an agent writing this
+  trailer and cannot confirm the string, ask rather than guess.
+- At the time of writing the correct value is `Claude Opus 5`.
+
+What to leave out: restating the diff, listing every file touched, or narrating the
+process. Explain *why* in the body when the reason is not obvious, and let the code
+speak for the *what*.
