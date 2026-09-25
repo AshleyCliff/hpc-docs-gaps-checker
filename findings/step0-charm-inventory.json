@@ -1,0 +1,50 @@
+{
+  "check": "charm-inventory",
+  "step": 0,
+  "shas_match_lock": true,
+  "sha_check": {
+    "docs": {"expected": "ee09c39e77bc42e830d31427df535e61f7608ef8", "observed": "ee09c39e77bc42e830d31427df535e61f7608ef8", "match": true},
+    "slurm-charms": {"expected": "cf74cd08109b8e31a251e9152a59093772a31cb2", "observed": "cf74cd08109b8e31a251e9152a59093772a31cb2", "match": true},
+    "filesystem-charms": {"expected": "2db19f2ecbfc7b71b9f8d81956db520f389d8d6c", "observed": "2db19f2ecbfc7b71b9f8d81956db520f389d8d6c", "match": true},
+    "sssd-operator": {"expected": "33ba6eac7ebb43db1b06d184345c20d1618f66e1", "observed": "33ba6eac7ebb43db1b06d184345c20d1618f66e1", "match": true},
+    "apptainer-operator": {"expected": "30441f1bfe0bd8c1ad8c4bdc62e33319ada926a4", "observed": "30441f1bfe0bd8c1ad8c4bdc62e33319ada926a4", "match": true},
+    "slurmutils": {"expected": "545c15cbff7ce21dffa95b2d968a5dac29cf5b58", "observed": "545c15cbff7ce21dffa95b2d968a5dac29cf5b58", "match": true},
+    "charmed-hpc-libs": {"expected": "bb3fbab047556728d3c3b509c8311ec7f7b1d2e4", "observed": "bb3fbab047556728d3c3b509c8311ec7f7b1d2e4", "match": true},
+    "charmed-hpc-terraform": {"expected": "74094c247541b4eaad16e98e336a79c27bbd39e6", "observed": "74094c247541b4eaad16e98e336a79c27bbd39e6", "match": true}
+  },
+  "facts": {
+    "charmcraft_count": {"claimed": 13, "observed": 13, "confirmed": true},
+    "test_mount_client_is_fixture": {
+      "confirmed": true,
+      "evidence": "filesystem-charms/charms/test-mount-client/charmcraft.yaml:6-8 gives title 'Test mount client', summary 'Operator to test the mount relation from `filesystem-client`', description 'Test mount client'. Decisive evidence is in the repo's release tooling and docs, not just the charm's own metadata: filesystem-charms/.github/workflows/publish.yaml:33-41 lists the exact set of charms released to Charmhub via a build matrix -- filesystem-client, cephfs-server-proxy, nfs-server-proxy, lustre-server-proxy, lustre-server -- and test-mount-client is absent from it. filesystem-charms/README.md:12-15 enumerates the same four user-facing charms (plus filesystem-client) and likewise omits test-mount-client. Its only other reference in the repo is filesystem-charms/tests/integration/conftest.py:236-251, a pytest fixture requiring a LOCAL_TEST_MOUNT_CLIENT env var pointing at a locally-built charm with no Charmhub-pull fallback -- unlike every other charm's fixture in the same file, which falls back to pulling from Charmhub when no local path is given. Together this is strong evidence it is a test-only fixture, never published. Charmhub itself was not queried (out of scope per AGENTS.md), so this rests on repo-internal evidence only."
+    },
+    "config_actions_inline": {
+      "confirmed": true,
+      "evidence": "No config.yaml or actions.yaml exists anywhere under /inputs/repos (excluding .git): `find /inputs/repos -not -path '*/.git/*' \\( -iname config.yaml -o -iname actions.yaml \\)` returned zero results. Of the 13 charmcraft.yaml files, config: is declared inline in 8 (cephfs-server-proxy, filesystem-client, lustre-server-proxy, lustre-server, nfs-server-proxy, test-mount-client, slurmctld, slurmd, slurmdbd) and actions: inline in 2 (slurmctld, slurmd). apptainer-operator, sackd, slurmrestd, and sssd-operator declare neither key."
+    }
+  },
+  "charmcraft_files": [
+    {"path": "apptainer-operator/charmcraft.yaml", "name": "apptainer", "line": 15},
+    {"path": "filesystem-charms/charms/cephfs-server-proxy/charmcraft.yaml", "name": "cephfs-server-proxy", "line": 4},
+    {"path": "filesystem-charms/charms/filesystem-client/charmcraft.yaml", "name": "filesystem-client", "line": 4},
+    {"path": "filesystem-charms/charms/lustre-server-proxy/charmcraft.yaml", "name": "lustre-server-proxy", "line": 4},
+    {"path": "filesystem-charms/charms/lustre-server/charmcraft.yaml", "name": "lustre-server", "line": 4},
+    {"path": "filesystem-charms/charms/nfs-server-proxy/charmcraft.yaml", "name": "nfs-server-proxy", "line": 4},
+    {"path": "filesystem-charms/charms/test-mount-client/charmcraft.yaml", "name": "test-mount-client", "line": 4},
+    {"path": "slurm-charms/charms/sackd/charmcraft.yaml", "name": "sackd", "line": 15},
+    {"path": "slurm-charms/charms/slurmctld/charmcraft.yaml", "name": "slurmctld", "line": 16},
+    {"path": "slurm-charms/charms/slurmd/charmcraft.yaml", "name": "slurmd", "line": 16},
+    {"path": "slurm-charms/charms/slurmdbd/charmcraft.yaml", "name": "slurmdbd", "line": 16},
+    {"path": "slurm-charms/charms/slurmrestd/charmcraft.yaml", "name": "slurmrestd", "line": 16},
+    {"path": "sssd-operator/charmcraft.yaml", "name": "sssd", "line": 15}
+  ],
+  "no_name_key_or_unparseable": [],
+  "extra_test_path_segments": [],
+  "notes": [
+    "All 13 charmcraft.yaml files parsed cleanly with PyYAML safe_load; every one has a top-level name: key, so no_name_key_or_unparseable is empty.",
+    "apptainer-operator/charmcraft.yaml declares name: apptainer, not apptainer-operator; sssd-operator/charmcraft.yaml declares name: sssd, not sssd-operator. The repo directory name and the charm's own name: differ in both cases. This matters for doc_claims.py: word-boundary matching must use the charm's name: value, never the repo directory name.",
+    "The path-segment search for a 'test-' or '-test' component (find + regex on full paths under /inputs/repos, excluding .git) matched only filesystem-charms/charms/test-mount-client and its own subpaths (charmcraft.yaml, pyproject.toml, src/charm.py). No other charm directory or docs path anywhere in the tree contains such a segment, so the fixture_suspect heuristic in the spec catches exactly the one charm AGENTS.md names and nothing wider."
+  ],
+  "halted": false,
+  "halt_reason": null
+}

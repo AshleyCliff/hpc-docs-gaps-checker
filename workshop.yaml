@@ -33,9 +33,11 @@ actions:
     ./extractors/diff.py findings/code-facts.json findings/doc-claims.json \
       > findings/deltas.json
 
+  # render.py creates findings/run-<date>-<sha>/ itself and writes report.md and
+  # findings.json into it, so there is no redirect here. See findings/README.md.
   # assert_clean.py takes the inputs tree root and appends repos/ itself.
   report: |
-    ./extractors/render.py findings/ > findings/report.md
+    ./extractors/render.py findings/
     ./extractors/assert_clean.py /inputs
 
   # Fails if the mount is missing or empty, which otherwise looks like

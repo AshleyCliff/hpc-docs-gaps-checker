@@ -112,6 +112,7 @@ mechanism. Three independent layers:
 | 1 | `chmod -R a-w` on the inputs tree, applied by `sync.py --freeze` | Works regardless of harness, sandbox, or agent. **This is the layer that actually matters.** |
 | 2 | Workshop `read-only: true` mount | Kernel-enforced. Batch path only. |
 | 3 | `assert_clean.py` post-run assertion | `git status --porcelain` must be empty for every source repo. Fails the run loudly. |
+| 4 | `edit: { "/inputs/**": "deny" }` in `opencode.json` | OpenCode refuses the edit before attempting it. Agent-specific, so it protects nothing if the agent is not OpenCode — but it is the only layer that stops a write *before* the syscall. |
 
 The security property that matters most is layer 1 on the **code** repos, not just
 the docs. Read-only mounts make a prompt-injected "now go edit this charm"
@@ -137,8 +138,11 @@ hpc-docs-gaps-checker/             # this repo - the ONLY writable tree
 │   ├── doc_claims.py
 │   ├── diff.py
 │   └── render.py
+├── specs/                         # one per check: scope, schema, acceptance command
 ├── prompts/                       # versioned, committed, hashed into reports
-├── .agents/skills/
+├── .agents/skills/                # symlinked to .claude/skills/ for both agents
+│   ├── write-extractor/
+│   └── triage-finding/
 ├── findings/                      # committed: run-<date>-<sha>/findings.json, report.md
 ├── patches/                       # proposed .diff files, never applied here
 └── .driftignore                   # accepted / wontfix finding IDs
@@ -258,9 +262,19 @@ preprocessing, never a build.
 
 ## Extractors
 
-**Not yet designed.** Which checks exist, what each one parses, and how facts are
-matched across the two sides are open decisions. Do not treat any earlier sketch
-of these as settled.
+**Specs live in `specs/`.** Each check has one, naming its scope, its output
+schema, its skip counts, and its acceptance command. A check without a spec is not
+ready to hand to an agent.
+
+Settled so far:
+
+| Check | Spec | Status |
+|---|---|---|
+| `charm-inventory` | `specs/charm-inventory.md` | the first end-to-end slice |
+| finding ID derivation | `specs/finding-ids.md` | near-frozen — changing it invalidates `.driftignore` |
+
+**Beyond those, still open.** Which further checks exist, what each parses, and how
+facts are matched are open decisions. Do not treat any earlier sketch as settled.
 
 What is settled is the shape every extractor must fit:
 
@@ -290,10 +304,34 @@ rather than trust these if the pins have moved.
 | `slurmdbd` | 1 | none |
 | `slurmrestd` | none | none |
 
-Thirteen `charmcraft.yaml` files exist across all repos. One of them,
-`filesystem-charms/charms/test-mount-client/`, looks like a test fixture rather than a
-published charm — treating every `charmcraft.yaml` as documentable will report it as an
-undocumented charm. Decide that deliberately and record the choice.
+Thirteen `charmcraft.yaml` files exist across all repos — **re-verified against the
+pins on 2026-09-25**, and all eight `HEAD` SHAs matched `manifest.lock` at that
+point. The full list:
+
+| Repo | Charm directories |
+|---|---|
+| `slurm-charms` | `sackd`, `slurmctld`, `slurmd`, `slurmdbd`, `slurmrestd` |
+| `filesystem-charms` | `cephfs-server-proxy`, `filesystem-client`, `lustre-server`, `lustre-server-proxy`, `nfs-server-proxy`, `test-mount-client` |
+| `sssd-operator` | (repo root) |
+| `apptainer-operator` | (repo root) |
+
+Note that the `filesystem-charms` set is wider than the `slurm-charms` table above
+suggests — four server/proxy charms that no earlier sketch in this file mentioned.
+
+One of them, `filesystem-charms/charms/test-mount-client/`, **is a test fixture and
+not a published charm** — confirmed 2026-09-25 on repo-internal evidence: it is
+absent from the release matrix in `filesystem-charms/.github/workflows/publish.yaml`
+and from the charm list in that repo's `README.md`, and its only other reference is
+an integration-test fixture requiring a locally-built charm with no Charmhub
+fallback, unlike every other charm's fixture in the same file. Charmhub was not
+queried, so this rests on the repo alone. Treating every `charmcraft.yaml` as
+documentable would report it as an undocumented charm; `specs/charm-inventory.md`
+records how that is handled.
+
+**Two charms declare a `name:` that differs from their repo directory:**
+`apptainer-operator/` declares `name: apptainer`, and `sssd-operator/` declares
+`name: sssd`. The other eleven agree. Any extractor that derives a charm name from
+its path will silently emit two phantom charms — always read the `name:` key.
 
 On the docs side, `reference/underlying-projects-and-dependencies.md` does contain a
 `charm, configuration options, actions` `csv-table`, but **its cells are links to
@@ -380,14 +418,75 @@ on the host would not prevent that.
 ### How agents run
 
 **OpenCode** is installed as an SDK, and implementation work is handed to an agent
-running **inside** the workshop, via the `agent` action:
-
-```console
-$ workshop run docs-audit -- agent 'build the first doc_claims.py check'
-```
+running **inside** the workshop, via the `agent` action.
 
 A host-side agent coordinates: it edits nothing under the inputs tree, and defers
 work that reads inputs to the container.
+
+#### The invocation pattern
+
+Pass a **committed prompt file**, and **tee the output to a log**:
+
+```console
+$ workshop run docs-audit -- agent "$(cat prompts/charm-inventory.md)" 2>&1 \
+    | tee findings/run-logs/agent-$(date +%Y%m%d-%H%M%S).log
+```
+
+Every part of that earns its place:
+
+| Part | Why |
+|---|---|
+| `"$(cat prompts/...)"` | The prompt is committed, so it can be hashed into a report. A CLI string cannot be, which makes the run unreproducible by construction. |
+| Double quotes | The prompt contains newlines and punctuation. Unquoted, the shell word-splits it and OpenCode receives fragments. |
+| `2>&1` | OpenCode writes some diagnostics to stderr — **including permission refusals**, which are the single most useful line when an unattended run halts. A stdout-only redirect loses them. |
+| `tee`, not `>` | Keeps the run visible live while still capturing it. |
+| Timestamped filename | Runs are compared against each other; one overwritten log is one lost comparison. |
+
+**No `$` prompt character when pasting.** The `console` blocks in this file show a
+shell prompt for legibility. Copying it verbatim into a shell is an error, and has
+already cost one round trip here.
+
+Three cautions:
+
+- **The agent outlives your shell.** `opencode` runs as a child of the container
+  process, not of your terminal, so Ctrl-C does not reach it and closing the
+  terminal does not stop it — but it *does* kill `tee`, losing the log while the
+  run continues blind. Observed once. If you need to abandon a run, find the
+  `opencode run` PID with `ps -ef | grep 'opencode run'` and kill it directly.
+  This is also why Step 0 writes its result to a file: the durable artifact must
+  not depend on the terminal surviving.
+- **Expect a long silence before the first output.** Sonnet 5 reads the spec and
+  `AGENTS.md` before emitting any tool call, and `tee` shows nothing until the pipe
+  delivers. A zero-byte log is not evidence of a hang — check for a live
+  `opencode run` process with accumulating CPU time before concluding anything.
+- **A pipeline's exit status is the last command's**, so `workshop run` failing is
+  masked by `tee` succeeding. Harmless while watching; add `set -o pipefail` if
+  this is ever wrapped in a script.
+- **The log is the least authoritative artifact in the process.** It is the model
+  narrating; `findings/*.json` is what it produced. When they disagree, believe the
+  JSON. Logs are for diagnosis — refusals, crashes, tool-call order, token cost —
+  and are gitignored. See `findings/run-logs/README.md`.
+
+#### Prompt files carry instructions only
+
+The whole file reaches the model via `$(cat ...)`, so **no title, no preamble, no
+usage example.** Operator-facing notes belong in `prompts/README.md`, keyed by
+filename.
+
+This is not tidiness. An earlier version of these files opened with a heading, an
+explanatory sentence, and a fenced block showing the `workshop run` command — and
+`ps` confirmed all of it reached the agent's argv. The fenced command was the real
+problem, because it referenced the very file being fed in: handing a model a shell
+command that cats its own prompt is a recursion invitation for no benefit.
+
+#### Scope one invocation to one deliverable
+
+A prompt that points at a committed spec, implements, self-tests, and reports
+counts is one round trip. Ten conversational follow-ups are ten, and each one is
+another approval and another billable session. Where a check has a gate step,
+there is a cheap gate-only prompt beside the full one — see
+`prompts/charm-inventory-step0.md`. Use it to verify a config change without
+paying for an implementation attempt.
 
 Workshop's IDE integrations cover VS Code and JetBrains Gateway — **not Zed** — so
 Zed cannot attach to the container directly. That is why the in-container work is
@@ -399,9 +498,14 @@ schema. This is not two systems to maintain.
 The project directory is mounted writable at `/project`, and actions are interpreted
 lazily, so an edit is picked up by the next `workshop run` with no refresh step.
 
-Agent safeguards are disabled inside the workshop precisely *because* the container
-plus read-only mounts are the boundary. **Do not replicate that posture when running
-agents on the host.**
+Workshop imposes no agent safeguards inside the container, precisely *because* the
+container plus read-only mounts are the boundary. **Do not replicate that posture
+when running agents on the host.**
+
+OpenCode, however, applies its **own** permission gates regardless of Workshop —
+notably `external_directory`, which defaults to `"ask"` and will auto-reject a read
+of `/inputs` in an unattended run. `opencode.json` configures this explicitly. See
+[Unattended operation](#unattended-operation).
 
 Network needs, by action. **This table is documentation, not enforcement** — see
 [Workshop does not restrict network access](#workshop-does-not-restrict-network-access)
@@ -537,6 +641,67 @@ Verified working end to end: `workshop run docs-audit -- agent '<prompt>'` reach
 model and returns a reply. Arguments reach OpenCode via `"$@"`, and `opencode.json` is
 picked up from `/project` without `OPENCODE_CONFIG` being set.
 
+### Model selection
+
+The committed default in `opencode.json` is the model the in-container agent uses.
+Choose it by **what a task establishes**, not by task size:
+
+| Work | Model | Why |
+|---|---|---|
+| A slice that sets a convention later work copies — schemas, citation plumbing, skip counting, ID derivation | **Claude Sonnet 5** | An error in a pattern is a precedent, not a bug. Worth the premium once. |
+| A slice that imitates an existing worked example — "do that again for actions" | **DeepSeek V3.2** | Pattern-matching against committed code, where a cheaper model is sufficient. |
+
+The first extractor slice (charm inventory) is the first category, so it runs on
+Sonnet 5. Revisit the default deliberately once a worked example exists, rather
+than letting it drift.
+
+Two failure modes drove this split, and both matter more in an unattended run
+because nobody is watching when they happen:
+
+- **Silent resolution of an under-specified judgement call.** A spec cannot
+  anticipate everything; the useful behaviour is to stop and report, not to pick
+  something plausible and continue. Prompts should say so explicitly.
+- **Optimistic completion.** Claiming success on partial work attacks this repo's
+  premise directly, because an extractor that silently skips input produces a gap
+  indistinguishable from "no finding." Make acceptance a command that either
+  passes or fails, never a judgement.
+
+**Model IDs in `opencode.json` are declarations, not proof.** The `models` block
+lists what OpenCode may ask for; whether the proxy and the key can route it is a
+separate question. Confirm a changed model with a trivial prompt before a long
+unattended run — and note that a typo in the ID fails at the provider, not at
+config load.
+
+### Unattended operation
+
+The design goal is that a full pass needs no interactive approvals. What that
+requires:
+
+- **OpenCode still gates paths outside `/project`,** even in the workshop. Its
+  `external_directory` permission defaults to `"ask"`, so a read of `/inputs`
+  auto-rejects in an unattended `opencode run` and the task halts. This is
+  OpenCode's own safeguard, not Workshop's, and the container boundary does not
+  disable it. `opencode.json` therefore sets `external_directory` to `allow` for
+  `/inputs/**` and `edit` to `deny` for the same path — a fourth read-only layer,
+  and the only one that stops the agent *before* a write is attempted. Host-side
+  agents remain a separate matter; see
+  [What `read-only: true` does and does not cover](#what-read-only-true-does-and-does-not-cover).
+  Note the asymmetry that caused the first failure: shell commands reading
+  `/inputs` succeeded, while a `read` of a specific file was refused. The gate is
+  per-tool, so "some reads worked" is not evidence that reads are permitted.
+- **Only three steps need a human**, once per session: `sync.py --freeze`, starting
+  the proxy, and `workshop start`. Everything after that is `workshop run`.
+- **Scope each hand-off to one invocation.** A prompt pointing at a committed spec,
+  which implements, self-tests, and reports counts, is one round trip. Ten
+  conversational follow-ups are ten. This is a second, independent reason to put
+  detail in `prompts/` and a spec rather than in a CLI string.
+- **Keep LLM output advisory.** Unattended is low-risk precisely because model
+  judgement lands in a reviewed report while deterministic checks gate — the
+  two-tier split under [CI, two tiers](#ci-two-tiers). If an LLM finding could ever
+  fail CI, that property is gone.
+- **A spend limit is not optional.** An unattended session looping on a failing
+  test is exactly the case it exists for.
+
 ### Workshop does not restrict network access
 
 There is **no egress restriction in Workshop itself, per-action or otherwise.** The
@@ -617,8 +782,13 @@ $ workshop start docs-audit
    pointing any agent at anything.**
 2. **One narrow end-to-end slice** — a single deliberately small check, taken all
    the way through `doc_claims.py`, `code_facts.py`, `diff.py`, and `render.py`.
-   Which check goes first is an open decision; that it is *one* and *narrow* is
-   not. Prove the pipeline shape on something small before broadening extraction.
+   **This is `charm-inventory`** (`specs/charm-inventory.md`): every charm in the
+   code is mentioned in the docs, and every charm the docs name exists. Chosen
+   because the extraction is near-trivial on both sides, so the work lands in the
+   plumbing every later check inherits — citations, skip counts, ID derivation —
+   and because `AGENTS.md` predicts the dominant gap class is *absence*, which a
+   presence check attacks directly. Prove the pipeline shape on something small
+   before broadening extraction.
 3. **Breadth** — further checks, once the end-to-end path is known to work.
 4. **The LLM layer.**
 5. **CI.**

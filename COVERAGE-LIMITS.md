@@ -278,6 +278,25 @@ Known assumptions:
 - **Alert-rule file layout.** The generated-reference check assumes rules live
   under known `src/cos/alert_rules/prometheus/` paths with `.rule` / `.rules`
   extensions. New locations or formats are missed.
+- **Contributor docs are not scanned for charm mentions.** The
+  `charm-inventory` check excludes `contributing/**`, `CONTRIBUTING.md`,
+  `README.md`, `.github/**`, and `.agents/**` from the docs side, on the reading
+  that contributor and repo-process pages are not user documentation. A charm
+  mentioned *only* in one of those pages is reported as undocumented. That is
+  intended, but it is an assumption: if upstream moves user-facing guidance into
+  a contributing page, the check will misreport it. Exclusions are counted and
+  reported, so the scope is visible in every run.
+- **Fixture charms are identified by path segment only.** A `charmcraft.yaml`
+  whose path contains a `test-` or `-test` segment is flagged
+  `fixture_suspect` and reported separately rather than filtered out — currently
+  only `filesystem-charms/charms/test-mount-client/`. A fixture named without
+  that pattern is treated as a publishable charm, and a real charm named with it
+  is demoted to the fixture section. Deliberately not widened: silent filtering
+  is how a real charm would vanish from coverage.
+- **Charm-name matching treats `-` as a word character.** So `slurmctld` does
+  not match inside `slurmctld-peer`. This prevents `slurmd` matching inside
+  `slurmdbd`, but it also means a charm referenced only via a longer hyphenated
+  identifier registers as unmentioned.
 
 **Mitigation to build:** extractors should report *what they skipped* — unparsed
 code-block languages, tables whose shape was not recognised, files matching a
