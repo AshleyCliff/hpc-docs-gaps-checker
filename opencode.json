@@ -15,13 +15,22 @@
     }
   },
   "model": "openrouter-proxy/anthropic/claude-sonnet-5",
+  "small_model": "openrouter-proxy/deepseek/deepseek-v3.2",
+
+  "autoupdate": false,
+  "share": "disabled",
+  "enabled_providers": ["openrouter-proxy"],
+  "snapshot": false,
 
   "permission": {
     "external_directory": {
       "/inputs/**": "allow"
     },
     "edit": {
+      "*": "allow",
       "/inputs/**": "deny"
-    }
+    },
+    "bash": "allow",
+    "doom_loop": "allow"
   }
 }

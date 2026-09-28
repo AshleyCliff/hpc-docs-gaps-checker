@@ -1,7 +1,17 @@
 # run-logs/
 
-Terminal transcripts from `workshop run` invocations. **Gitignored** except this
-file.
+Terminal transcripts from `workshop run` invocations, plus `proxy.log` from
+`openrouter-proxy.py`. **Gitignored** except this file.
+
+The two are meant to be read **together**: an agent transcript is buffered and may
+show nothing, while `proxy.log` timestamps every model request and so acts as a
+heartbeat. Requests still arriving means the agent is working and merely silent;
+requests stopping mid-run means the stall is upstream of the model. That comparison
+is the only tool available for [the unexplained stall](../../AGENTS.md).
+
+`proxy.log` is appended across sessions on purpose — its value is comparing runs,
+not inspecting one. Each startup line carries the key fingerprint, which is where
+one session ends and the next begins.
 
 ## Why these are not committed
 

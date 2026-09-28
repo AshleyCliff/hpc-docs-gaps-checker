@@ -105,7 +105,7 @@ These are not style preferences. Breaking one defeats the purpose of the repo.
 ## Read-only enforcement
 
 A read-only inputs tree is a hard requirement, so it does not rely on any single
-mechanism. Three independent layers:
+mechanism. Four independent layers:
 
 | Layer | Mechanism | Notes |
 |---|---|---|
@@ -120,12 +120,77 @@ the docs. Read-only mounts make a prompt-injected "now go edit this charm"
 
 ---
 
+## Approving host-agent commands
+
+A host-side agent (Zed, or any other) runs its terminal commands inside a sandbox
+and asks before exceeding it. **These prompts are a real boundary and deserve
+reading**, because the host agent is outside every layer above except layer 1 — see
+[What `read-only: true` does and does not cover](#what-read-only-true-does-and-does-not-cover).
+
+### Grant the narrowest permission that works
+
+Requests are not equally scoped. Two of them are genuinely narrow; two are not:
+
+| Requested | Scope of the grant | Use when |
+|---|---|---|
+| `allow_hosts: ["github.com"]` | Those hosts only, HTTP/HTTPS only | Cloning, fetching, installing — **the default for anything network-bound** |
+| `fs_write_paths: ["/abs/dir"]` | That directory subtree only | Writing outside the project, when the paths are known |
+| `allow_all_hosts` / `allow_fs_write_all` | **All** network / **all** writes | The specific hosts or paths genuinely cannot be enumerated |
+| `unsandboxed` | **No sandbox at all** | Nothing narrower can work — in practice, Git metadata writes |
+
+### The scoping trap
+
+Approving "for the rest of this thread" grants **the permission**, not the command
+that requested it. So a thread-scoped `unsandboxed` approval given to `git add`
+covers every later `unsandboxed` command, whatever it does. This is easy to
+misread as "approve all future `git add` commands," and has already been misread
+once here.
+
+The narrow grants behave as you would expect — `allow_hosts: ["github.com"]` really
+does only cover that host. It is specifically `unsandboxed` and `allow_fs_write_all`
+where thread scope is much broader than the command in front of you suggests.
+
+**Commits are the case to watch.** Git metadata is never grantable via
+`fs_write_paths` — the sandbox keeps `.git` read-only by design — so staging and
+committing can *only* be done `unsandboxed`. The narrowest legitimate need forces
+the widest grant, which makes "allow once" worth the extra click every time.
+
+Thread-scoped grants clear when the thread ends. "Always" persists in settings and
+must be removed there.
+
+### Do not assume the sandbox is a sufficient boundary
+
+Check what it actually covers before relying on it. Two failures of this kind have
+already happened here:
+
+- **A loopback probe was read as evidence the proxy was down.** `ss`, `ps`, and
+  `curl http://127.0.0.1:8317` from inside the sandbox cannot see a host process,
+  because loopback and IP literals are unreachable and not individually grantable.
+  The proxy was running the whole time. **A negative result from inside the sandbox
+  is not evidence about the host.**
+- **`/tmp` is cleared between commands.** A file written by one sandboxed command is
+  gone by the next, and a host-written `/tmp/proxy.log` is not the same file the
+  sandbox sees.
+
+The general rule: **the sandbox constrains the agent, not the system.** It is not a
+test harness, and "the command failed inside the sandbox" and "the thing is broken"
+are different claims. When a check must observe host or container state — a running
+process, a listening socket, a mount — run it in a real shell or via
+`workshop run`, and treat a sandboxed result as inconclusive rather than negative.
+
+Equally, the sandbox is **not** what protects the inputs tree. That is layer 1,
+`chmod -R a-w`, which holds regardless of how any agent is sandboxed. Do not relax
+layer 1 on the grounds that a sandbox is in place.
+
+---
+
 ## Layout
 
 ```
 hpc-docs-gaps-checker/             # this repo - the ONLY writable tree
 ├── AGENTS.md
 ├── COVERAGE-LIMITS.md             # known blind spots - keep current
+├── OPEN-ISSUE-*.md                # unresolved infrastructure problems; delete when fixed
 ├── manifest.yaml                  # pinned SHAs; the reproducibility anchor
 ├── manifest.lock                  # resolved SHAs from the last --freeze; committed
 ├── workshop.yaml
@@ -514,6 +579,7 @@ below:
 | Action | Network needed |
 |---|---|
 | `sync.py --freeze` (host) | GitHub |
+| `fix-catalogue-fetch`, `check-egress` | none — they *remove* a network dependency |
 | `check-mount` | none |
 | `extract` | **none** |
 | `agent` | the host proxy only, via the `openrouter` tunnel |
@@ -621,6 +687,13 @@ Two consequences worth knowing:
   otherwise lands on your shell prompt, and a bare `&` job dies when the terminal
   closes. It also reads the key once at startup, so **restart it after any key
   change** and check the fingerprint line to confirm which key it loaded.
+- **Log to `findings/run-logs/proxy.log`, appending — not to `/tmp`.** The proxy log
+  is the primary diagnostic for the startup stall in
+  `OPEN-ISSUE-opencode-startup-stall.md`, and its value is *cross-run* comparison, so it must outlive a reboot and must not be
+  truncated each session. `/tmp` is cleared on reboot, aged out by
+  `systemd-tmpfiles`, and — as already caused one misdiagnosis here — is not the same
+  directory a sandboxed agent sees. Appending keeps sessions in one file;
+  each startup line records the key fingerprint, so they stay distinguishable.
 - **The key must never be written to `opencode.json`.** That file is committed;
   `apiKey: "none"` is correct and deliberate.
 
@@ -689,6 +762,26 @@ requires:
   Note the asymmetry that caused the first failure: shell commands reading
   `/inputs` succeeded, while a `read` of a specific file was refused. The gate is
   per-tool, so "some reads worked" is not evidence that reads are permitted.
+- **An object-syntax permission should carry an explicit catch-all.** Write
+  `edit: { "*": "allow", "/inputs/**": "deny" }` rather than the deny alone; rules
+  are evaluated by pattern match with the last match winning, and relying on the
+  behaviour of an unmatched path is relying on something the docs do not state.
+  **This is defensive practice, not a diagnosed fix** — it was added while
+  investigating a stall that the proxy log later showed was not caused by a refused
+  write.
+- **Default-`ask` permissions are the recurring trap.** `external_directory` and
+  `doom_loop` both default to `ask` and both halt an unattended run. Enumerate them
+  in `opencode.json` rather than relying on defaults. Note the trade `doom_loop`
+  makes: allowing it means a looping agent burns tokens instead of stopping, which
+  is one more reason the spend limit is not optional.
+- **Diagnose a silent run by what it has written, not by its log.** OpenCode buffers,
+  so an empty log proves nothing. `find . -newermt '-40 minutes' -type f` shows
+  whether a run is making progress; a live process with minutes of elapsed time,
+  almost no CPU, and zero modified files is stalled rather than slow.
+- **A known startup stall is open and unresolved.** Agent runs intermittently hang
+  after `init` without ever calling the model. See
+  `OPEN-ISSUE-opencode-startup-stall.md` for the symptom, the diagnostic steps, and
+  what has already been ruled out. The workaround is to detect and retry.
 - **Only three steps need a human**, once per session: `sync.py --freeze`, starting
   the proxy, and `workshop start`. Everything after that is `workshop run`.
 - **Scope each hand-off to one invocation.** A prompt pointing at a committed spec,
@@ -730,11 +823,33 @@ a `sync` refresh if you ever clone from inside — which you should not, since `
 is host-only. Undo with `lxc network unset workshopbr0 security.acls` and
 `... security.acls.default.egress.action`.
 
-This is **not** currently part of the required setup. It is recorded because it is
-the only mechanism that turns the `extract` row of the network table from a
-statement of intent into an enforced property, and because it does not stop prompts
-and extracted facts from reaching the model provider — that egress is the deal this
-design accepts by using a hosted model at all.
+**This is currently active on this machine** — verified 2026-09-28: `lxc network
+get workshopbr0 security.acls` returns `offline`, with
+`security.acls.default.egress.action=reject`. An earlier version of this section
+described the block as available-but-unused, which was wrong and cost hours of
+misdiagnosis.
+
+**Use `reject`, not `drop`.** This is the detail that matters, and it is not
+cosmetic:
+
+| Action | Behaviour | Consequence |
+|---|---|---|
+| `drop` | Silently discards the packet | The client waits for its own timeout — ~10s for OpenCode, 15s for `curl` |
+| `reject` | Sends an immediate refusal | The client fails in milliseconds |
+
+Both keep the container equally offline, so prefer `reject`: with `drop`, every
+blocked connection costs the client its full timeout, which makes any startup fetch
+in the container slow and every diagnosis harder. Set it once:
+
+```console
+$ lxc network set workshopbr0 security.acls.default.egress.action=reject
+```
+
+It is recorded here because it is the only mechanism that turns the `extract` row
+of the network table from a statement of intent into an enforced property, and
+because it does not stop prompts and extracted facts from reaching the model
+provider — that egress is the deal this design accepts by using a hosted model at
+all, and it travels over the tunnel rather than the bridge.
 
 ### Environment prerequisites
 
@@ -768,9 +883,11 @@ Start-of-session order on the host:
 
 ```console
 $ ./extractors/sync.py --freeze              # refresh and re-freeze the inputs tree
-$ ./openrouter-proxy.py > /tmp/proxy.log 2>&1 & disown
-$ head -1 /tmp/proxy.log                     # check the key fingerprint
+$ ./openrouter-proxy.py >> findings/run-logs/proxy.log 2>&1 & disown
+$ tail -1 findings/run-logs/proxy.log        # check the key fingerprint
 $ workshop start docs-audit
+$ workshop run docs-audit -- fix-catalogue-fetch   # after a refresh or rebuild
+$ workshop run docs-audit -- check-egress          # asserts the host-side ACL
 ```
 
 ---

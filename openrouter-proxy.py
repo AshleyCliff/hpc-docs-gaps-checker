@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Host-side OpenRouter proxy: injects the API key so the workshop never sees it."""
-import http.client, os, sys
+import http.client, os, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 UPSTREAM, LISTEN = "openrouter.ai", ("127.0.0.1", 8317)
@@ -25,8 +25,12 @@ class Server(ThreadingHTTPServer):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
+    # Timestamped because an untimestamped log cannot separate one run from the
+    # next, which cost a full afternoon of misdiagnosis once.
     def log_message(self, fmt, *args):
-        sys.stderr.write("%s %s\n" % (self.command, self.path))
+        sys.stderr.write(
+            "%s %s %s\n" % (time.strftime("%H:%M:%S"), self.command, self.path)
+        )
 
     def proxy(self):
         length = int(self.headers.get("Content-Length") or 0)

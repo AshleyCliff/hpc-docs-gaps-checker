@@ -40,6 +40,35 @@ actions:
     ./extractors/render.py findings/
     ./extractors/assert_clean.py /inputs
 
+  # OpenCode fetches its model catalogue from models.opencode.ai at startup.
+  # This container is deliberately offline, so that fetch always fails -- and
+  # OpenCode handles the failure fine PROVIDED it fails fast. Measured on
+  # 2026-09-28, time from `init` to the logged fetch failure:
+  #
+  #   ~9.9s  ->  hangs forever   (LXD egress action=drop, no hosts pin)
+  #   ~3.6s  ->  hangs forever   (egress action=reject, no hosts pin)
+  #   ~0.6s  ->  proceeds to stream normally  (reject + hosts pin)
+  #
+  # Both halves are needed. This action applies the container half; the host
+  # half cannot be committed and must be set once per machine:
+  #
+  #   lxc network set workshopbr0 security.acls.default.egress.action=reject
+  #
+  # Run once per container, and again after `workshop refresh` or a rebuild,
+  # which discard the container filesystem. Idempotent. See "The models.dev
+  # stall" in AGENTS.md.
+  fix-catalogue-fetch: |
+    grep -q 'models\.opencode\.ai' /etc/hosts || \
+      echo "127.0.0.1 models.opencode.ai models.dev api.models.dev" | sudo tee -a /etc/hosts > /dev/null
+    timeout 3 curl -sS -o /dev/null https://models.opencode.ai/api.json || test "$?" = "7"
+
+  # Asserts the HOST half is still in place. A dropping bridge leaves curl
+  # waiting until `timeout` kills it (rc=124); a rejecting one refuses in ~20ms
+  # (rc=7). Checked separately because it lives outside the repo and so reverts
+  # silently if the LXD ACL is ever rebuilt.
+  check-egress: |
+    timeout 3 curl -sS -o /dev/null https://github.com || test "$?" = "7"
+
   # Fails if the mount is missing or empty, which otherwise looks like
   # "no findings" rather than a broken run.
   check-mount: |
