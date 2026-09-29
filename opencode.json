@@ -9,19 +9,25 @@
         "apiKey": "none"
       },
       "models": {
-        "anthropic/claude-sonnet-5": { "name": "Claude Sonnet 5" },
-        "deepseek/deepseek-v3.2": { "name": "DeepSeek V3.2" }
+        "anthropic/claude-sonnet-5": {
+          "name": "Claude Sonnet 5"
+        },
+        "deepseek/deepseek-v3.2": {
+          "name": "DeepSeek V3.2"
+        },
+        "anthropic/claude-opus-5": {
+          "name": "Claude Opus 5"
+        }
       }
     }
   },
-  "model": "openrouter-proxy/anthropic/claude-sonnet-5",
-  "small_model": "openrouter-proxy/deepseek/deepseek-v3.2",
-
+  "model": "openrouter-proxy/deepseek/deepseek-v3.2",
   "autoupdate": false,
   "share": "disabled",
-  "enabled_providers": ["openrouter-proxy"],
+  "enabled_providers": [
+    "openrouter-proxy"
+  ],
   "snapshot": false,
-
   "permission": {
     "external_directory": {
       "/inputs/**": "allow"

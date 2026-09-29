@@ -40,32 +40,21 @@ actions:
     ./extractors/render.py findings/
     ./extractors/assert_clean.py /inputs
 
-  # OpenCode fetches its model catalogue from models.opencode.ai at startup.
-  # This container is deliberately offline, so that fetch always fails -- and
-  # OpenCode handles the failure fine PROVIDED it fails fast. Measured on
-  # 2026-09-28, time from `init` to the logged fetch failure:
+  # Asserts the container is still offline AND that the block rejects rather than
+  # drops. A dropping bridge leaves curl waiting until `timeout` kills it
+  # (rc=124); a rejecting one refuses in ~20ms (rc=7). `drop` makes every
+  # in-container fetch cost a full client timeout, which slows startup and makes
+  # any diagnosis harder.
   #
-  #   ~9.9s  ->  hangs forever   (LXD egress action=drop, no hosts pin)
-  #   ~3.6s  ->  hangs forever   (egress action=reject, no hosts pin)
-  #   ~0.6s  ->  proceeds to stream normally  (reject + hosts pin)
-  #
-  # Both halves are needed. This action applies the container half; the host
-  # half cannot be committed and must be set once per machine:
+  # Checked because it is set on the HOST, outside version control, and so
+  # reverts silently if the LXD ACL is ever rebuilt:
   #
   #   lxc network set workshopbr0 security.acls.default.egress.action=reject
   #
-  # Run once per container, and again after `workshop refresh` or a rebuild,
-  # which discard the container filesystem. Idempotent. See "The models.dev
-  # stall" in AGENTS.md.
-  fix-catalogue-fetch: |
-    grep -q 'models\.opencode\.ai' /etc/hosts || \
-      echo "127.0.0.1 models.opencode.ai models.dev api.models.dev" | sudo tee -a /etc/hosts > /dev/null
-    timeout 3 curl -sS -o /dev/null https://models.opencode.ai/api.json || test "$?" = "7"
-
-  # Asserts the HOST half is still in place. A dropping bridge leaves curl
-  # waiting until `timeout` kills it (rc=124); a rejecting one refuses in ~20ms
-  # (rc=7). Checked separately because it lives outside the repo and so reverts
-  # silently if the LXD ACL is ever rebuilt.
+  # Hosts the container legitimately needs are reached through the proxy's
+  # CONNECT allowlist instead -- see openrouter-proxy.py. Do not pin them in
+  # /etc/hosts: that sends them to 127.0.0.1:443 where nothing listens, and
+  # defeats the tunnel.
   check-egress: |
     timeout 3 curl -sS -o /dev/null https://github.com || test "$?" = "7"
 
@@ -78,4 +67,14 @@ actions:
     echo "OK: $count repo(s) at /inputs/repos"
     test -w /inputs && echo "WARN: /inputs is writable" || echo "OK: /inputs read-only"
 
-  agent: opencode run "$@"
+  # HTTPS_PROXY points OpenCode's catalogue fetch at the host proxy, which
+  # CONNECT-tunnels it to an allowlisted host. Without this the fetch fails
+  # (container is offline) and OpenCode intermittently hangs at startup.
+  #
+  # NO_PROXY keeps the model calls direct: opencode.json already targets
+  # 127.0.0.1:8317 over plain HTTP, and routing that through the proxy would
+  # make it try to proxy to itself.
+  agent: |
+    export HTTPS_PROXY=http://127.0.0.1:8317
+    export NO_PROXY=127.0.0.1,localhost
+    opencode run "$@"

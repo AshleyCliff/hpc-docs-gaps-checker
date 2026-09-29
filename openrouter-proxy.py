@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""Host-side OpenRouter proxy: injects the API key so the workshop never sees it."""
-import http.client, os, sys, time
+"""Host-side OpenRouter proxy: injects the API key so the workshop never sees it.
+
+Also acts as a narrowly-scoped HTTP CONNECT proxy, so the offline container can
+reach a short allowlist of hosts it genuinely needs -- currently just OpenCode's
+model catalogue. CONNECT relays encrypted bytes without decrypting them, so this
+needs no certificate authority and cannot read the tunnelled traffic.
+"""
+import http.client, os, select, socket, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 UPSTREAM, LISTEN = "openrouter.ai", ("127.0.0.1", 8317)
+
+# Hosts the container may reach via CONNECT. Keep this list as short as the
+# container's actual needs: everything here is a hole in an otherwise offline
+# container, and this process reads seven repositories of third-party content.
+# Port 443 only -- no plaintext, no arbitrary ports.
+CONNECT_ALLOW = {"models.opencode.ai", "models.dev", "api.models.dev"}
 
 # Deliberately NOT OPENROUTER_API_KEY: Zed reads that name for its own model
 # access, and a shared variable means one tool's key silently overrides the
@@ -63,11 +75,60 @@ class Handler(BaseHTTPRequestHandler):
 
     do_GET = do_POST = do_PUT = do_DELETE = proxy
 
+    # CONNECT: relay raw encrypted bytes to an allowlisted host. No TLS is
+    # terminated here, so no CA is needed and the payload stays unreadable to
+    # this process -- it is a dumb pipe, not an interceptor.
+    #
+    # Exists because OpenCode fetches its model catalogue over https:// from a
+    # hardcoded URL. The container is otherwise offline, and an unreachable
+    # catalogue makes OpenCode hang at startup. Letting the fetch *succeed*
+    # removes the failure path entirely. Note the host is CDN-backed, so its IPs
+    # rotate -- which is why this is allowlisted by name here rather than by CIDR
+    # in an LXD ACL.
+    def do_CONNECT(self):
+        host, _, port = self.path.partition(":")
+        if host not in CONNECT_ALLOW or port != "443":
+            sys.stderr.write(
+                "%s CONNECT %s REFUSED (not in allowlist)\n"
+                % (time.strftime("%H:%M:%S"), self.path)
+            )
+            self.send_error(403, "host not permitted")
+            return
+        try:
+            upstream = socket.create_connection((host, 443), timeout=30)
+        except OSError as e:
+            sys.stderr.write(
+                "%s CONNECT %s FAILED (%s)\n" % (time.strftime("%H:%M:%S"), self.path, e)
+            )
+            self.send_error(502, "upstream unreachable")
+            return
+        self.send_response(200, "Connection Established")
+        self.end_headers()
+        client = self.connection
+        with upstream:
+            while True:
+                ready, _, _ = select.select([client, upstream], [], [], 30)
+                if not ready:
+                    break
+                for src in ready:
+                    dst = upstream if src is client else client
+                    try:
+                        data = src.recv(8192)
+                    except OSError:
+                        return
+                    if not data:
+                        return
+                    try:
+                        dst.sendall(data)
+                    except OSError:
+                        return
+
 # Enough to tell the intended key from a stale or wrong one, without
 # printing the secret.
 print(
     f"listening on {LISTEN[0]}:{LISTEN[1]} -> {UPSTREAM}  "
-    f"[{KEY_VAR}: {len(KEY)} chars, ends ...{KEY[-4:]}]",
+    f"[{KEY_VAR}: {len(KEY)} chars, ends ...{KEY[-4:]}]  "
+    f"CONNECT allowlist: {','.join(sorted(CONNECT_ALLOW))}",
     file=sys.stderr,
 )
 try:

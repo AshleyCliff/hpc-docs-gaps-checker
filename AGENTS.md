@@ -579,7 +579,7 @@ below:
 | Action | Network needed |
 |---|---|
 | `sync.py --freeze` (host) | GitHub |
-| `fix-catalogue-fetch`, `check-egress` | none — they *remove* a network dependency |
+| `check-egress` | none — it asserts the *absence* of a network path |
 | `check-mount` | none |
 | `extract` | **none** |
 | `agent` | the host proxy only, via the `openrouter` tunnel |
@@ -710,9 +710,10 @@ OpenRouter key, and check `workshop exec -- opencode stats` after a sweep. Note 
 that OpenCode uses a second, cheaper model to title sessions; it appears on the bill
 and is not a bug — it is why a trivial prompt still logs a `build · <model>` line.
 
-Verified working end to end: `workshop run docs-audit -- agent '<prompt>'` reaches the
-model and returns a reply. Arguments reach OpenCode via `"$@"`, and `opencode.json` is
-picked up from `/project` without `OPENCODE_CONFIG` being set.
+Verified: `workshop run docs-audit -- agent '<prompt>'` reaches the model and returns
+a reply. Arguments reach OpenCode via `"$@"`, and `opencode.json` is picked up from
+`/project` without `OPENCODE_CONFIG` being set. Note that reaching the model is not
+guaranteed on any given run — see `OPEN-ISSUE-opencode-startup-stall.md`.
 
 ### Model selection
 
@@ -724,9 +725,18 @@ Choose it by **what a task establishes**, not by task size:
 | A slice that sets a convention later work copies — schemas, citation plumbing, skip counting, ID derivation | **Claude Sonnet 5** | An error in a pattern is a precedent, not a bug. Worth the premium once. |
 | A slice that imitates an existing worked example — "do that again for actions" | **DeepSeek V3.2** | Pattern-matching against committed code, where a cheaper model is sufficient. |
 
-The first extractor slice (charm inventory) is the first category, so it runs on
-Sonnet 5. Revisit the default deliberately once a worked example exists, rather
-than letting it drift.
+**The committed default is DeepSeek V3.2, but not for the reason above.** Roughly
+39% of agent runs hang before reaching the model, across *every* model tested — see
+`OPEN-ISSUE-opencode-startup-stall.md`. DeepSeek is the default only because it is
+the cheapest thing to retry, not because it is more reliable.
+
+So the table above describes what *should* govern the choice. Until the hang is
+fixed, model selection is largely moot: any run may need retrying regardless, and
+the premium model's advantage is wasted on attempts that never start.
+
+**Do not read a short streak of successes as a fix.** At a 39% failure rate, two
+consecutive passes happen about a third of the time by chance. This has already
+caused three false "it's fixed" calls in one day.
 
 Two failure modes drove this split, and both matter more in an unattended run
 because nobody is watching when they happen:
@@ -741,9 +751,17 @@ because nobody is watching when they happen:
 
 **Model IDs in `opencode.json` are declarations, not proof.** The `models` block
 lists what OpenCode may ask for; whether the proxy and the key can route it is a
-separate question. Confirm a changed model with a trivial prompt before a long
-unattended run — and note that a typo in the ID fails at the provider, not at
-config load.
+separate question, and a typo fails at the provider rather than at config load.
+
+Confirm an ID against the provider's live list rather than from memory:
+
+```console
+$ curl -sS http://127.0.0.1:8317/api/v1/models | python3 -m json.tool | grep '"id"'
+```
+
+**Avoid any `:batch` variant** (`anthropic/claude-opus-5:batch` and similar). Those
+are asynchronous batch endpoints: cheaper, but they return no synchronous response,
+so an interactive agent run would wait forever by design.
 
 ### Unattended operation
 
@@ -775,13 +793,19 @@ requires:
   makes: allowing it means a looping agent burns tokens instead of stopping, which
   is one more reason the spend limit is not optional.
 - **Diagnose a silent run by what it has written, not by its log.** OpenCode buffers,
-  so an empty log proves nothing. `find . -newermt '-40 minutes' -type f` shows
-  whether a run is making progress; a live process with minutes of elapsed time,
-  almost no CPU, and zero modified files is stalled rather than slow.
+  so an empty log proves nothing. `find . -newermt '-10 minutes' -type f` shows
+  whether a run is making progress, and timestamped lines in
+  `findings/run-logs/proxy.log` show whether it has reached the model at all.
+- **Do not kill a quiet run early.** A live process with low CPU and no output is
+  *usually* stalled, but one observed run recovered after 210 seconds and then
+  worked normally. Wait five minutes before concluding. Killing early destroys the
+  evidence and biases any failure statistics you then collect.
 - **A known startup stall is open and unresolved.** Agent runs intermittently hang
   after `init` without ever calling the model. See
-  `OPEN-ISSUE-opencode-startup-stall.md` for the symptom, the diagnostic steps, and
-  what has already been ruled out. The workaround is to detect and retry.
+  `OPEN-ISSUE-opencode-startup-stall.md` for the symptom, the diagnostic runbook,
+  the nine hypotheses already disproven, and the assumptions that proved premature.
+  The workaround is to retry; a retry wrapper must use a five-minute threshold, not
+  sixty seconds.
 - **Only three steps need a human**, once per session: `sync.py --freeze`, starting
   the proxy, and `workshop start`. Everything after that is `workshop run`.
 - **Scope each hand-off to one invocation.** A prompt pointing at a committed spec,
@@ -845,6 +869,22 @@ in the container slow and every diagnosis harder. Set it once:
 $ lxc network set workshopbr0 security.acls.default.egress.action=reject
 ```
 
+Asserted by the `check-egress` action, because this setting lives on the host,
+outside version control, and so reverts silently if the ACL is ever rebuilt.
+
+**Hosts the container legitimately needs go through the proxy, not through a hole
+in this block.** `openrouter-proxy.py` implements `CONNECT` against a short
+hostname allowlist on port 443 only — currently just OpenCode's model catalogue.
+It relays encrypted bytes without decrypting them, so it needs no certificate
+authority and cannot read the traffic. The `agent` action sets `HTTPS_PROXY` and
+`NO_PROXY` accordingly.
+
+Two reasons this beats an LXD allow-rule: the catalogue endpoint is CDN-backed and
+its IPs rotate, while LXD rules take CIDRs; and refusals are logged, so an
+unexpected outbound attempt is visible rather than silent. **Do not pin such hosts
+in the container's `/etc/hosts`** — that sends them to `127.0.0.1:443` where nothing
+listens, and defeats the tunnel.
+
 It is recorded here because it is the only mechanism that turns the `extract` row
 of the network table from a statement of intent into an enforced property, and
 because it does not stop prompts and extracted facts from reaching the model
@@ -886,8 +926,7 @@ $ ./extractors/sync.py --freeze              # refresh and re-freeze the inputs 
 $ ./openrouter-proxy.py >> findings/run-logs/proxy.log 2>&1 & disown
 $ tail -1 findings/run-logs/proxy.log        # check the key fingerprint
 $ workshop start docs-audit
-$ workshop run docs-audit -- fix-catalogue-fetch   # after a refresh or rebuild
-$ workshop run docs-audit -- check-egress          # asserts the host-side ACL
+$ workshop run docs-audit -- check-egress    # asserts the host-side LXD ACL
 ```
 
 ---
