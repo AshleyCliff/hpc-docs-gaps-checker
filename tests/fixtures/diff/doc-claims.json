@@ -1,0 +1,27 @@
+{
+  "check": "charm-inventory",
+  "claims": [
+    {
+      "check": "charm-inventory",
+      "kind": "charm-mention",
+      "name": "slurmd",
+      "file": "docs/howto/deploy.md",
+      "line": 10,
+      "context": "prose"
+    },
+    {
+      "check": "charm-inventory",
+      "kind": "charm-mention",
+      "name": "slurmrestd-legacy",
+      "file": "docs/howto/deploy.md",
+      "line": 20,
+      "context": "prose"
+    }
+  ],
+  "skipped": {
+    "unreadable_file": [],
+    "excluded_by_scope": {"count": 0, "paths": []},
+    "unreliable_fence_classification": []
+  },
+  "counts": {"md_files_scanned": 1, "claims_emitted": 2, "candidate_names": 3}
+}

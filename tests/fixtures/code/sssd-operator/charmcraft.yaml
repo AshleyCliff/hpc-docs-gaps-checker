@@ -1,0 +1,6 @@
+type: charm
+name: sssd
+summary: Fixture charm for charm-inventory tests.
+description: |
+  Fixture only. Directory is "sssd-operator" but the declared name is
+  "sssd" -- the second of the two directory/name mismatches in the spec.

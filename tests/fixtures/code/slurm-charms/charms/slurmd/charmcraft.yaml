@@ -1,0 +1,6 @@
+type: charm
+name: slurmd
+summary: Fixture charm for charm-inventory tests.
+description: |
+  Fixture only. Used for the word-boundary test: "slurmd" must not be
+  reported as mentioned just because "slurmdbd" appears in a doc.

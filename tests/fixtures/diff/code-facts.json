@@ -1,0 +1,39 @@
+{
+  "check": "charm-inventory",
+  "facts": [
+    {
+      "check": "charm-inventory",
+      "kind": "charm",
+      "name": "slurmctld",
+      "repo": "slurm-charms",
+      "file": "slurm-charms/charms/slurmctld/charmcraft.yaml",
+      "line": 16,
+      "fixture_suspect": false
+    },
+    {
+      "check": "charm-inventory",
+      "kind": "charm",
+      "name": "slurmd",
+      "repo": "slurm-charms",
+      "file": "slurm-charms/charms/slurmd/charmcraft.yaml",
+      "line": 16,
+      "fixture_suspect": false
+    },
+    {
+      "check": "charm-inventory",
+      "kind": "charm",
+      "name": "test-mount-client",
+      "repo": "filesystem-charms",
+      "file": "filesystem-charms/charms/test-mount-client/charmcraft.yaml",
+      "line": 4,
+      "fixture_suspect": true
+    }
+  ],
+  "skipped": {
+    "unparseable_yaml": [],
+    "missing_name_key": [],
+    "unreadable_file": [],
+    "excluded_by_scope": {"count": 0, "paths": []}
+  },
+  "counts": {"charmcraft_files_found": 3, "charms_emitted": 3}
+}

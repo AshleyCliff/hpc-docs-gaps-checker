@@ -1,0 +1,5 @@
+type: charm
+name: broken
+summary: "unterminated string
+description: this file is deliberately invalid YAML -- an unterminated
+  double-quoted scalar -- to exercise the unparseable_yaml skip path.

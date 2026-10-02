@@ -1,0 +1,8 @@
+type: charm
+name: test-mount-client
+summary: Fixture charm for charm-inventory tests.
+description: |
+  Fixture only. Path contains the "test-mount-client" segment, which
+  contains "test-" -- this must set fixture_suspect: true and be reported
+  under the separate fixture-suspect section, never mixed into
+  undocumented-charm findings.

@@ -1,0 +1,6 @@
+type: charm
+name: slurmdbd
+summary: Fixture charm for charm-inventory tests.
+description: |
+  Fixture only. Deliberately named so it is a superstring of "slurmd" --
+  the boundary case the matching rule must get right.

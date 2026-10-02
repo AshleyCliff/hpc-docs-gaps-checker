@@ -1,0 +1,10 @@
+type: charm
+name: slurmctld
+summary: Fixture charm for charm-inventory tests.
+description: |
+  Fixture only -- not the real slurmctld charmcraft.yaml. Minimal shape
+  needed by code_facts.py: a top-level `name:` key at column 0.
+bases:
+  - build-on:
+      - name: ubuntu
+        channel: "24.04"

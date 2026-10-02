@@ -1,0 +1,5 @@
+type: charm
+summary: Fixture charm with no `name:` key -- must be skipped and reported
+  under skipped.missing_name_key, not silently dropped.
+description: |
+  Deliberately missing the required `name:` key.

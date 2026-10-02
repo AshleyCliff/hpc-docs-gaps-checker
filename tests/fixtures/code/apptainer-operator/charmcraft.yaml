@@ -1,0 +1,7 @@
+type: charm
+name: apptainer
+summary: Fixture charm for charm-inventory tests.
+description: |
+  Fixture only. Directory is "apptainer-operator" but the declared name is
+  "apptainer" -- this is the directory/name mismatch the spec calls out as
+  a live trap. The extractor must read `name:`, never infer from the path.
