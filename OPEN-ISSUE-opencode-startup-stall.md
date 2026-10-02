@@ -1,6 +1,26 @@
 # Open issue: OpenCode startup stall in the workshop
 
-**Status: UNRESOLVED as of 2026-09-28.** Referred to someone with deeper Workshop
+**Status: STILL OPEN — intermittent, and currently NOT REPRODUCIBLE ON DEMAND.**
+
+Latest data (2026-10-02): the stall recurred once on the long implementation
+prompt, then **11 of 11** subsequent runs with that same prompt passed. Combined
+with 20/20 on the short prompt over the preceding two days, that is **31 of the
+last 32 runs passing**, against a historical 42.6% failure rate.
+
+So the stall is real and still occurring, but rare enough now that there is **no
+reproducer** — which is the main obstacle to diagnosing it. See
+[Recurrence: 2026-10-02](#recurrence-2026-10-02).
+
+Two cautions for whoever picks this up:
+
+- **Do not call a streak a fix.** That has happened four times here. The 29–30
+  September streak was reported as "not reproducing" rather than "fixed" because
+  no mechanism was found — and it recurred two days later.
+- **Do not call a single stall a regression.** The inverse error. One stall in 32
+  runs is consistent with a low-rate intermittent bug, not with a change having
+  broken something.
+
+Previously: UNRESOLVED as of 2026-09-28, referred to someone with deeper Workshop
 knowledge. This file is the investigation record so the work is not repeated.
 
 **Nine hypotheses have been proposed and disproven.** Read
@@ -10,6 +30,258 @@ before trusting any number in it — several were contaminated by premature kill
 by mistaking short success streaks for fixes.
 
 When resolved, fold the outcome into `AGENTS.md` and delete this file.
+
+---
+
+## Recurrence: 2026-10-02
+
+Run `ad641d36`, the first attempt at the full `charm-inventory` implementation
+prompt. Stalled identically to the 2026-09-29 specimen.
+
+| Evidence | Value |
+|---|---|
+| Last log line | `message=init`, 12:50:01 — nothing after |
+| `message=stream` for this run | **none** |
+| Model call at the proxy | **none** (last was `CONNECT models.opencode.ai` at 08:50:01) |
+| Process | alive, `ep_poll`, 10s CPU over 11+ min |
+| TCP connections | none |
+| Files written | none (only logs) |
+
+Second dump saved: `findings/run-logs/stall-dump-20261002-090142.txt`. Thread
+layout matches the first dump exactly — main thread in `ep_poll`, workers in
+`futex_do_wait`, nothing to wake it.
+
+### What this recurrence rules out
+
+- **Not the model.** The run used Claude Sonnet 5, switched that morning from
+  DeepSeek. But Sonnet 5 appears in **78 successful stream events** historically,
+  and the immediately preceding successful run (2026-09-30 14:43) used DeepSeek.
+  Consistent with hypothesis 9: failures span all models.
+- **Not the proxy allowlist.** The proxy had just been restarted with the correct
+  (npmjs-free) allowlist, and the catalogue `CONNECT` succeeded at 08:50:01.
+- **Not prompt size per se**, though see the correlation below.
+
+### The prompt-class correlation — tested, and it does NOT hold
+
+The 20 passing runs on 29–30 September all used the **short** gate prompt
+(`charm-inventory-step0.md`), while the run that stalled used the **long**
+implementation prompt (`charm-inventory.md`). That suggested prompt substance was
+the variable, matching the messy pre-existing observation under
+[What correlates, weakly](#what-correlates-weakly).
+
+**Tested the same day: 10 further runs with the long prompt, 10/10 passed.**
+
+| Batch | Prompt | Result |
+|---|---|---|
+| 2026-09-29, 2026-09-30 | step0 (short) | 20/20 pass |
+| 2026-10-02 | charm-inventory (long) | 1 stall, then 11/11 pass |
+
+Verified against OpenCode's log: 12 distinct runs on 2026-10-02, 11 streamed, and
+the only non-streaming run is the original stall `ad641d36`.
+
+So the long prompt is **not** reliably reproducible either. The stall remains
+intermittent and is not explained by prompt class, which is consistent with
+hypothesis 8 — neither length nor tool use explains it.
+
+**It also means no reproducer exists.** 31 of the last 32 runs have passed across
+both prompt classes, so there is currently no way to trigger the stall on demand
+— which is the main obstacle to diagnosing it further.
+
+### Consequence for measurement
+
+`stall-rate.sh` previously defaulted to the step0 prompt, so its 20/20 said
+nothing about the long prompt. The default is now the long prompt, with the prompt
+file as an explicit third argument, and the script prints a note that a rate is
+only valid for the prompt it was measured with.
+
+The harness now also **polls for the verdict and kills the run as soon as it
+streams** (default 20s after), rather than paying for a full implementation
+session ten times over. Attempts resolve in ~25s instead of ~300s, which makes a
+10-run batch cheap enough to repeat.
+
+---
+
+## Confirmation: 20/20 across two days (superseded — see recurrence above)
+
+| Batch | Date | Result | Notes |
+|---|---|---|---|
+| 1 | 2026-09-29 16:46 | 10/10 passed | Same proxy process throughout |
+| 2 | 2026-09-30 09:58 | 10/10 passed | New proxy PID, container up overnight |
+
+Verified against OpenCode's own log rather than the harness's scoring:
+
+| Counter | Before batch 2 | After |
+|---|---|---|
+| Distinct runs | 57 | 68 (+11: 10 attempts + 1 smoke test) |
+| Reached `stream` | 37 | 48 (+11) |
+| Runs today reaching `init` but never `stream` | — | **0** |
+
+The 20 historical failures all pre-date 2026-09-29 and are unchanged.
+
+**Probability of 20 consecutive passes at a 42.6% failure rate: ~0.002%.** The
+stall is not occurring under the current configuration.
+
+**Why this still says "not reproducing" and not "fixed":** no mechanism was ever
+found. Nothing in the day's changes has a plausible causal link to an idle Bun
+event loop, so a latent timing-dependent bug cannot be excluded. Per this file's
+own history — three false "it's fixed" calls in one day — the bar is a mechanism
+or sustained absence, not a streak.
+
+### A harness fault that mimicked the stall exactly
+
+Worth recording, because it nearly produced a false *negative* as convincing as
+those three false positives.
+
+Batch 2's first attempt wedged for 38 minutes. The symptoms were indistinguishable
+from the stall: no output, no model call, process alive, nothing written. The cause
+was entirely different:
+
+```
+timeout 300 workshop run …   S   sigsuspend      <- waiting on child
+workshop run docs-audit …    Tl  do_signal_stop  <- STOPPED
+```
+
+`workshop run`, launched from a non-interactive script, was suspended by a TTY
+signal (`SIGTTIN`/`SIGTTOU`) before spawning anything in the container. Because a
+**stopped process does not act on SIGTERM until it resumes**, `timeout` waited
+forever. OpenCode never ran at all — `opencode.log` was untouched.
+
+Fixes in `stall-rate.sh`:
+
+- `timeout --foreground -k 10` and stdin from `/dev/null`, which prevents the
+  suspension; smoke-tested with a trivial prompt.
+- A third verdict, **`INVALID`**, for attempts where OpenCode's *total* run count
+  did not move. Those are excluded from the rate, because they say nothing about
+  the stall.
+- With zero valid attempts the script refuses to compute a rate at all.
+
+**The distinguishing check: did `opencode.log` get written?** If not, OpenCode
+never started and it is an environment fault, not a stall. Anyone diagnosing a
+recurrence should apply that test first.
+
+---
+
+## The 2026-09-29 session
+
+Four things were established. The first is the headline; the rest are why it is
+not yet a closed case.
+
+### 1. A clean 10-run measurement passed 10/10
+
+`./stall-rate.sh 10 agent` — 10 attempts, `prompts/charm-inventory-step0.md`,
+counting "reached `message=stream`" from OpenCode's own log. Cross-checked three
+ways rather than trusted:
+
+| Check | Before | After |
+|---|---|---|
+| Distinct runs in `opencode.log` | 47 | 57 |
+| Runs reaching `stream` | 27 | 37 |
+| Model calls at the proxy, test window | — | 225 |
+
+Ten runs, ten new streams, and real model traffic. **The prior rate was 20/47
+failures (~43%); ten consecutive passes at that rate is ~0.4% by chance.**
+
+Caveat that matters: this does not identify a *mechanism*. Nothing in the day's
+changes has an obvious causal link to an idle Bun event loop, so a latent
+timing-dependent bug remains plausible. Treat as strong evidence, not a diagnosis.
+
+**A run also completed Step 0 end to end**, rewriting
+`findings/step0-charm-inventory.json` with valid JSON: `halted: false`,
+`shas_match_lock: true`, all three survey facts confirmed, and all 13 charms with
+correct `name:` values — including the `apptainer` and `sssd` cases where the
+declared name differs from the directory. Before this session the issue file
+recorded Step 0 completing exactly twice ever. This is stronger than "reached the
+model": the agent did the work, obeyed the read-only constraint, and produced its
+durable artifact.
+
+### 2. The stall is an idle event loop, not a deadlock
+
+First dump taken from *inside* a live stall (`findings/run-logs/stall-dump-*.txt`),
+via `gdb` attach. All 14 threads in benign waits:
+
+| Thread | State |
+|---|---|
+| `opencode` (main) | `ep_poll` |
+| `HTTP Client` | `ep_poll`, **no socket open** |
+| `IO Watcher` | `ep_poll` |
+| 7× `HeapHelper` | `pthread_cond_timedwait` |
+| 3× `Bun Pool` | `futex_do_wait` |
+
+No mutex contention, no futex deadlock, `SigPnd: 0`, 7s CPU over 8 minutes. The
+process is a correctly-functioning event loop **with nothing left to wake it**.
+This rules out the whole lock-cycle / blocked-syscall class and points to a lost
+wakeup or unresolved promise between config load and provider construction.
+
+Limitation: backtraces are `?? ()` — `gdb` cannot resolve Bun's JIT frames, so
+thread states are known but the JS call site is not.
+
+### 3. OpenCode has NO Node build — do not re-propose this
+
+The obvious hypothesis ("run it on Node instead of Bun") **is not testable.** The
+npm package `opencode-ai` downloads the same Bun-compiled ELF executable
+(`bin/opencode.exe`, 185 MB) and wraps it; Node is never involved at runtime.
+
+| | SDK binary | npm 1.18.33 |
+|---|---|---|
+| SHA256 | `f9dab322…` | `0abbb7c3…` |
+| BuildID | `c30f169b…` | `c30f169b…` |
+| Type | Bun ELF | Bun ELF |
+
+Different builds, same runtime. An npm install version-compares two Bun binaries
+and nothing more. `workshop.yaml` carries a note so this is not retried.
+
+### 4. Infrastructure fixed along the way
+
+- **`gdb` works.** `ptrace` attach succeeds in the container. Note that
+  `/proc/<pid>/stack` being denied under `sudo` is a *separate* restriction and
+  does **not** imply `ptrace` is blocked — that inference was made and was wrong.
+- **A plain-HTTP proxy path exists** for apt (`HTTP_ALLOW` in
+  `openrouter-proxy.py`, `apt-install` in `workshop.yaml`), so the offline
+  container can install packages without a new hole in the LXD egress block.
+  Model calls and apt are dispatched *before* key injection, so no third-party
+  host ever sees the API key — verified with a sentinel key.
+- **Chunked encoding hangs apt.** The first version of that path served every
+  response `Transfer-Encoding: chunked`; apt's `http` method wants
+  length-delimited bodies and wedged indefinitely — `apt-get`, `store` and `gpgv`
+  all parked in `poll()` with zero CPU and nothing written. Fixed by buffering and
+  sending an explicit `Content-Length`. **A single non-pipelined GET test passed
+  against the broken version**, which is the "a check must exercise the thing it
+  claims to fix" lesson repeating itself.
+
+### What would confirm or refute the fix
+
+1. ~~**Another 10 runs**, ideally on a different day.~~ **Done 2026-09-30: 10/10.**
+   See [Confirmation: 20/20](#confirmation-2020-across-two-days).
+2. **A mechanism.** Still unknown. This is why the status is "not reproducing"
+   rather than "fixed".
+3. **The host comparison**, still unrun: `opencode` on the host, unproxied,
+   direct to OpenRouter. Lower value now that the container path is passing —
+   keep it in reserve for a recurrence.
+
+**Do not delete this file yet.** Two things are worth keeping even though the
+stall is not reproducing: the diagnostic runbook, which is the fastest route back
+to the evidence if it returns, and the harness-fault distinction above, which is a
+live trap for anyone measuring this. Delete only once a mechanism is known, or
+after a sustained period of normal use with no recurrence.
+
+### If it recurs
+
+In order:
+
+1. **Was `opencode.log` written?** If not, OpenCode never started — environment
+   fault, not the stall. See the harness note above.
+2. **`init` with no `stream`?** That is the stall. Do not kill it.
+3. **Dump it:** `./stall-dump.sh` — `gdb` is installed and `ptrace` works, so this
+   captures thread states and a backtrace. Non-destructive.
+4. **Re-measure:** `./stall-rate.sh 10 agent` for a rate rather than an anecdote.
+
+### A harness caveat worth knowing
+
+`stall-rate.sh` caps each attempt at 5 minutes. Step 0 does real work and takes
+**longer** than that, so a ~300s elapsed time in its output is the harness stopping
+a *healthy* run, not a stall. The pass/fail verdict is still correct — it keys on
+reaching `stream`, decided in the first second — but those timings are not latency
+and the script must not be used to judge task completion.
 
 ---
 
@@ -51,12 +323,16 @@ unknown.
 
 ## The rate
 
-**17 of 44 runs failed to reach `stream` — 39%.** Roughly constant across the whole
-investigation, through every configuration change and every model.
+**Historical: 17 of 44 runs failed to reach `stream` — 39%.** Roughly constant
+across the whole investigation, through every configuration change and every model.
 
-**Treat 39% as an upper bound, not a measurement.** Several of those runs were
-killed after 1–3 minutes, inside the window where the one slow recovery would still
-have been pending. The true hang rate is lower by an unknown amount.
+**Recomputed 2026-09-29, before that day's fixes: 20 of 47 — 42.6%.** Note this is
+*higher* than the 39% figure it replaces, so the concern that premature kills had
+inflated the number turned out not to matter much. The rate was real and stable.
+
+**Then 10 of 10 passed** after the day's changes — see
+[The 2026-09-29 session](#the-2026-09-29-session). Any future comparison should
+use 42.6% as the pre-fix baseline, not 39%.
 
 Recompute cleanly with:
 
@@ -225,9 +501,13 @@ run — it is parented to the container, not your shell. Closing the terminal ki
 
 ## Workaround
 
-**Retry.** At ~61% success, a handful of attempts gets a run through. A wrapper is
-now worth writing — earlier it was rejected on the belief that substantive prompts
-always failed, which the DeepSeek successes disproved.
+**Possibly unnecessary now** — see [The 2026-09-29 session](#the-2026-09-29-session),
+where 10 of 10 runs passed. Keep this section until that is confirmed.
+
+**Retry.** At the pre-fix ~57% success rate, a handful of attempts gets a run
+through. `stall-rate.sh` already implements the retry-and-count loop and can serve
+as the basis for a wrapper; earlier a wrapper was rejected on the belief that
+substantive prompts always failed, which the DeepSeek successes disproved.
 
 If automating: **the silence threshold must be 5 minutes, not 60 seconds**, or the
 wrapper will kill recoverable runs exactly as this investigation did.

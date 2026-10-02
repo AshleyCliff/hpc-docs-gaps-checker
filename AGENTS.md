@@ -511,6 +511,30 @@ Every part of that earns its place:
 shell prompt for legibility. Copying it verbatim into a shell is an error, and has
 already cost one round trip here.
 
+#### One command per code block
+
+When an agent hands the operator a command to copy and run, **each command goes in
+its own fenced block**, with no shell prompt character. Never bundle several
+commands into one block, and never join them with `&&` for the operator's
+convenience.
+
+The reason is that this repo's operator-run steps are exactly the ones that must be
+checked between commands, not fired in sequence:
+
+| Step | What must be checked before the next one |
+|---|---|
+| `kill <pid>` on the proxy | That it actually died, before rebinding the port |
+| Starting the proxy | The banner's key fingerprint and allowlists |
+| `workshop stop` before `remount` | That the state really is `Stopped` |
+| An `agent` run | Whether it stalled — which needs a five-minute wait |
+
+A bundled block invites running all of them, which defeats the checking. A block
+per command also means a failure is attributable to one command rather than a
+chain, and lets the operator re-run just the step that failed.
+
+Separate blocks additionally survive copying better: most UIs offer one
+copy-per-block, so a multi-command block is easy to paste half of.
+
 Three cautions:
 
 - **The agent outlives your shell.** `opencode` runs as a child of the container
@@ -725,18 +749,23 @@ Choose it by **what a task establishes**, not by task size:
 | A slice that sets a convention later work copies — schemas, citation plumbing, skip counting, ID derivation | **Claude Sonnet 5** | An error in a pattern is a precedent, not a bug. Worth the premium once. |
 | A slice that imitates an existing worked example — "do that again for actions" | **DeepSeek V3.2** | Pattern-matching against committed code, where a cheaper model is sufficient. |
 
-**The committed default is DeepSeek V3.2, but not for the reason above.** Roughly
-39% of agent runs hang before reaching the model, across *every* model tested — see
-`OPEN-ISSUE-opencode-startup-stall.md`. DeepSeek is the default only because it is
-the cheapest thing to retry, not because it is more reliable.
+**The startup stall is no longer reproducing** as of 2026-09-30 — 20 consecutive
+successful runs across two days, against a historical 42.6% failure rate. No
+mechanism was identified, so treat it as dormant rather than fixed, and see
+`OPEN-ISSUE-opencode-startup-stall.md` if it returns. The table above can now
+govern model choice on its merits.
 
-So the table above describes what *should* govern the choice. Until the hang is
-fixed, model selection is largely moot: any run may need retrying regardless, and
-the premium model's advantage is wasted on attempts that never start.
+**Do not read a short streak of successes as a fix.** At the historical 42.6%
+failure rate, two consecutive passes happened about a third of the time by chance,
+which caused three false "it's fixed" calls in one day. The 20/20 result clears
+that bar by a wide margin (~0.002%), but the general caution stands for any future
+change: measure with `./stall-rate.sh`, and require enough trials to beat chance.
 
-**Do not read a short streak of successes as a fix.** At a 39% failure rate, two
-consecutive passes happen about a third of the time by chance. This has already
-caused three false "it's fixed" calls in one day.
+**Distinguish a stall from an environment fault.** A wedged `workshop run` looks
+identical to the stall — no output, no model call, process alive. The test is
+whether `~/.local/share/opencode/log/opencode.log` was written at all: if not,
+OpenCode never started and the problem is elsewhere. `stall-rate.sh` scores such
+attempts `INVALID` and excludes them rather than counting them as failures.
 
 Two failure modes drove this split, and both matter more in an unattended run
 because nobody is watching when they happen:
@@ -800,12 +829,13 @@ requires:
   *usually* stalled, but one observed run recovered after 210 seconds and then
   worked normally. Wait five minutes before concluding. Killing early destroys the
   evidence and biases any failure statistics you then collect.
-- **A known startup stall is open and unresolved.** Agent runs intermittently hang
-  after `init` without ever calling the model. See
-  `OPEN-ISSUE-opencode-startup-stall.md` for the symptom, the diagnostic runbook,
-  the nine hypotheses already disproven, and the assumptions that proved premature.
-  The workaround is to retry; a retry wrapper must use a five-minute threshold, not
-  sixty seconds.
+- **A startup stall was open for some time and is now dormant.** Agent runs used to
+  hang after `init` without ever calling the model, at ~42.6%. Not reproducing as
+  of 2026-09-30 (20/20 across two days), though no mechanism was found. See
+  `OPEN-ISSUE-opencode-startup-stall.md` for the diagnostic runbook, the nine
+  disproven hypotheses, and the thread-state dump. If it returns: do not kill the
+  process, run `./stall-dump.sh`, and use a five-minute threshold, never sixty
+  seconds.
 - **Only three steps need a human**, once per session: `sync.py --freeze`, starting
   the proxy, and `workshop start`. Everything after that is `workshop run`.
 - **Scope each hand-off to one invocation.** A prompt pointing at a committed spec,

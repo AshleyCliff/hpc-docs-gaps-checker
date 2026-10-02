@@ -1,0 +1,170 @@
+{
+  "check": "charm-inventory",
+  "run": {
+    "date": "2026-10-02",
+    "extractor_version": "1.0.0",
+    "repos": [
+      {
+        "name": "apptainer-operator",
+        "repo": "canonical/apptainer-operator",
+        "kind": "charm",
+        "sha": "30441f1bfe0bd8c1ad8c4bdc62e33319ada926a4"
+      },
+      {
+        "name": "charmed-hpc-libs",
+        "repo": "canonical/charmed-hpc-libs",
+        "kind": "library",
+        "sha": "bb3fbab047556728d3c3b509c8311ec7f7b1d2e4"
+      },
+      {
+        "name": "charmed-hpc-terraform",
+        "repo": "canonical/charmed-hpc-terraform",
+        "kind": "terraform",
+        "sha": "74094c247541b4eaad16e98e336a79c27bbd39e6"
+      },
+      {
+        "name": "docs",
+        "repo": "canonical/charmed-hpc-docs",
+        "kind": "docs",
+        "sha": "ee09c39e77bc42e830d31427df535e61f7608ef8"
+      },
+      {
+        "name": "filesystem-charms",
+        "repo": "canonical/filesystem-charms",
+        "kind": "charm-monorepo",
+        "sha": "2db19f2ecbfc7b71b9f8d81956db520f389d8d6c"
+      },
+      {
+        "name": "slurm-charms",
+        "repo": "canonical/slurm-charms",
+        "kind": "charm-monorepo",
+        "sha": "cf74cd08109b8e31a251e9152a59093772a31cb2"
+      },
+      {
+        "name": "slurmutils",
+        "repo": "canonical/slurmutils",
+        "kind": "library",
+        "sha": "545c15cbff7ce21dffa95b2d968a5dac29cf5b58"
+      },
+      {
+        "name": "sssd-operator",
+        "repo": "canonical/sssd-operator",
+        "kind": "charm",
+        "sha": "33ba6eac7ebb43db1b06d184345c20d1618f66e1"
+      }
+    ]
+  },
+  "findings": {
+    "undocumented-charm": [
+      {
+        "id": "charm-inventory:lustre-server-proxy:d998f828",
+        "check": "charm-inventory",
+        "kind": "undocumented-charm",
+        "subject": "lustre-server-proxy",
+        "severity": "missing-entry",
+        "name": "lustre-server-proxy",
+        "code_citation": {
+          "file": "filesystem-charms/charms/lustre-server-proxy/charmcraft.yaml",
+          "line": 4
+        },
+        "doc_citations": []
+      },
+      {
+        "id": "charm-inventory:lustre-server:a720498a",
+        "check": "charm-inventory",
+        "kind": "undocumented-charm",
+        "subject": "lustre-server",
+        "severity": "missing-entry",
+        "name": "lustre-server",
+        "code_citation": {
+          "file": "filesystem-charms/charms/lustre-server/charmcraft.yaml",
+          "line": 4
+        },
+        "doc_citations": []
+      }
+    ],
+    "phantom-charm": []
+  },
+  "fixture_suspect": [
+    {
+      "name": "test-mount-client",
+      "code_citation": {
+        "file": "filesystem-charms/charms/test-mount-client/charmcraft.yaml",
+        "line": 4
+      },
+      "documented": false
+    }
+  ],
+  "counts": {
+    "code_charms": 13,
+    "doc_claims": 394,
+    "undocumented_charm_findings": 2,
+    "phantom_charm_findings": 0,
+    "fixture_suspect_charms": 1
+  },
+  "skipped": {
+    "code_facts": {
+      "unparseable_yaml": [],
+      "missing_name_key": [],
+      "unreadable_file": [],
+      "excluded_by_scope": {
+        "count": 0,
+        "paths": []
+      }
+    },
+    "doc_claims": {
+      "unreadable_file": [],
+      "excluded_by_scope": {
+        "count": 10,
+        "paths": [
+          ".agents/skills/add-meta-description/SKILL.md",
+          ".agents/skills/generate-prometheus-alerts-reference/SKILL.md",
+          ".agents/skills/update-landing-pages/SKILL.md",
+          ".agents/skills/update-sphinx-stack/SKILL.md",
+          ".github/pull_request_template.md",
+          "CONTRIBUTING.md",
+          "README.md",
+          "contributing/code.md",
+          "contributing/documentation.md",
+          "contributing/index.md"
+        ]
+      },
+      "unreliable_fence_classification": [
+        {
+          "file": "howto/deploy/deploy-identity-provider.md",
+          "line": 481,
+          "reason": "fence close ':'x4 did not match open stack [(5, 'tab-set'), (4, 'tab-item'), (3, 'dropdown')]; context classification for subsequent lines in this file may be unreliable"
+        },
+        {
+          "file": "howto/deploy/deploy-identity-provider.md",
+          "line": 483,
+          "reason": "fence close ':'x5 did not match open stack [(5, 'tab-set'), (4, 'tab-item'), (3, 'dropdown')]; context classification for subsequent lines in this file may be unreliable"
+        },
+        {
+          "file": "howto/deploy/deploy-identity-provider.md",
+          "line": null,
+          "reason": "unclosed fence(s) at EOF: [(5, 'tab-set'), (4, 'tab-item'), (3, 'dropdown')]; context classification near EOF may be unreliable"
+        },
+        {
+          "file": "howto/deploy/deploy-slurm.md",
+          "line": 276,
+          "reason": "fence close ':'x4 did not match open stack []; context classification for subsequent lines in this file may be unreliable"
+        },
+        {
+          "file": "howto/deploy/deploy-slurm.md",
+          "line": 278,
+          "reason": "fence close ':'x5 did not match open stack []; context classification for subsequent lines in this file may be unreliable"
+        }
+      ]
+    },
+    "diff": {
+      "phantom_charm_candidates": {
+        "retired_names_loaded": [],
+        "note": {
+          "reason": "no --retired-charms list given; phantom-charm candidate set is empty by design (see spec)",
+          "path": null
+        }
+      }
+    }
+  }
+}

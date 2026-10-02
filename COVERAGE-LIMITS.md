@@ -297,6 +297,29 @@ Known assumptions:
   not match inside `slurmctld-peer`. This prevents `slurmd` matching inside
   `slurmdbd`, but it also means a charm referenced only via a longer hyphenated
   identifier registers as unmentioned.
+- **MyST fence nesting is tracked by a stack, not by run-length alone, and can
+  desynchronise.** `doc_claims.py` matches each closing `:::`-run to the
+  colon-count of its own opener (MyST's convention for nesting), pushing/popping
+  a stack as it scans. Confirmed against the real pinned docs tree
+  (`howto/deploy/deploy-slurm.md:276-278`, two `::::`/`:::::` closers with
+  nothing open) that upstream MyST source can itself contain orphaned closing
+  fences — a doc source editing artifact, not a shape this extractor
+  misunderstands. When this happens, every claim after the mismatch is still
+  emitted (no claim is dropped), but its `context` classification
+  (`prose`/`code-block`/`table`/`heading`) is no longer trustworthy for the
+  rest of that file, because the extractor cannot be sure which fence it
+  believes itself inside is still accurate. Reported per-occurrence under
+  `doc_claims.py`'s `skipped.unreliable_fence_classification`, counted in
+  every run's skip report — never silently absorbed into a context guess.
+- **`phantom-charm` findings depend on a committed known-retired-charms list
+  that does not yet exist.** `diff.py` accepts `--retired-charms <file>`; with
+  no file (the current state), it emits zero `phantom-charm` findings and
+  records why under `skipped.phantom_charm_candidates`. This is deliberately
+  conservative — the alternative (scanning docs prose for arbitrary
+  charm-shaped strings) is a different, noisier check that specs/charm-inventory.md
+  explicitly rules out. A docs page naming a charm that never existed in any
+  pinned repo, and is not on the retired list, is invisible to this check
+  until that list is created.
 
 **Mitigation to build:** extractors should report *what they skipped* — unparsed
 code-block languages, tables whose shape was not recognised, files matching a
