@@ -27,9 +27,18 @@ actions:
   # NOTE: sync is host-only. It creates and chmod a-w's the inputs tree, which
   # this container sees read-only. Run `extractors/sync.py --freeze` on the host.
 
+  # doc_claims.py takes --names-from: its candidate charm names come from
+  # code_facts.py's output, so the code side must be extracted FIRST. This is
+  # deliberate per specs/charm-inventory.md -- the docs side never invents
+  # charm-like strings from prose, it only looks for names the code declares.
+  #
+  # `set -e` so a failing stage does not leave a stale downstream file looking
+  # like a successful run.
   extract: |
+    set -e
     ./extractors/code_facts.py /inputs/repos > findings/code-facts.json
-    ./extractors/doc_claims.py /inputs/repos/docs > findings/doc-claims.json
+    ./extractors/doc_claims.py /inputs/repos/docs \
+      --names-from findings/code-facts.json > findings/doc-claims.json
     ./extractors/diff.py findings/code-facts.json findings/doc-claims.json \
       > findings/deltas.json
 
@@ -67,6 +76,28 @@ actions:
     echo "OK: $count repo(s) at /inputs/repos"
     test -w /inputs && echo "WARN: /inputs is writable" || echo "OK: /inputs read-only"
 
+  # Install packages into the container, which is offline by design (the LXD
+  # egress ACL). apt speaks plain HTTP to archive.ubuntu.com, so this routes
+  # through the host proxy's HTTP_ALLOW path rather than through a new hole in
+  # the egress block -- see openrouter-proxy.py.
+  #
+  # Plaintext is acceptable here and only here: apt indexes and packages are
+  # GPG-signed and verified against the container's keyring, so a tampered
+  # payload is refused. Confidentiality is not what protects integrity.
+  #
+  # Needs the host proxy running. Usage:
+  #   workshop run docs-audit -- apt-install gdb strace
+  #
+  # Not persistent: a `workshop refresh` rebuilds the container and discards
+  # anything installed this way. Re-run it afterwards.
+  apt-install: |
+    test -n "$1" || { echo "usage: apt-install <package>..."; exit 1; }
+    export http_proxy=http://127.0.0.1:8317
+    export https_proxy=http://127.0.0.1:8317
+    export no_proxy=127.0.0.1,localhost
+    sudo -E apt-get update -qq
+    sudo -E apt-get install -y --no-install-recommends "$@"
+
   # HTTPS_PROXY points OpenCode's catalogue fetch at the host proxy, which
   # CONNECT-tunnels it to an allowlisted host. Without this the fetch fails
   # (container is offline) and OpenCode intermittently hangs at startup.
@@ -78,3 +109,32 @@ actions:
     export HTTPS_PROXY=http://127.0.0.1:8317
     export NO_PROXY=127.0.0.1,localhost
     opencode run "$@"
+
+  # Python deps the extractors and their tests need, inside the container.
+  #
+  # The container is offline by design, so `uv pip install` / `pip install`
+  # CANNOT reach PyPI -- observed 2026-10-02, a run failed with
+  # "tunnel error: unsuccessful" fetching pypi.org. Install from the Ubuntu
+  # archive through the proxy's HTTP_ALLOW path instead.
+  #
+  # pyyaml ships in the base image (6.0.1); pytest does not. Keep this action
+  # as the single place that records what the pipeline needs.
+  install-deps: |
+    export http_proxy=http://127.0.0.1:8317
+    export https_proxy=http://127.0.0.1:8317
+    export no_proxy=127.0.0.1,localhost
+    sudo -E apt-get update -qq
+    sudo -E apt-get install -y --no-install-recommends python3-yaml python3-pytest
+    python3 -c 'import yaml; print("pyyaml", yaml.__version__)'
+    python3 -m pytest --version
+
+  # NOTE: there is deliberately no `agent-npm` action.
+  #
+  # Tested 2026-09-29 and removed: OpenCode has NO Node build. The npm package
+  # `opencode-ai` just downloads the same Bun-compiled ELF executable
+  # (bin/opencode.exe, 185 MB) and wraps it -- Node is never involved at
+  # runtime. So "run it on Node instead of Bun" is not a testable hypothesis,
+  # and an npm install only version-compares two Bun binaries.
+  #
+  # Do not re-propose this without first checking `file` on
+  # node_modules/opencode-ai/bin/ -- it is an ELF executable, not JavaScript.
