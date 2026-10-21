@@ -42,6 +42,19 @@ DROP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
         "te", "trailers", "transfer-encoding", "upgrade", "host",
         "content-length", "authorization"}
 
+
+# DATE INCLUDED DELIBERATELY. This log is appended across sessions on purpose --
+# its value is comparing runs, not inspecting one (findings/run-logs/README.md).
+# With time-of-day only, reconstructing a single run's request gaps silently
+# interleaves different days, producing nonsense like `13:49 -> 14:49` from two
+# separate sessions. Observed 2026-10-21 while diagnosing a stall, where it
+# actively obstructed the analysis the log exists to support.
+#
+# One helper rather than eight inline strftime calls, so the format is changed
+# in one place.
+def ts() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
 class Server(ThreadingHTTPServer):
     daemon_threads = True      # a stalled request must not outlive the process
     allow_reuse_address = True # rebind immediately after restart, no TIME_WAIT
@@ -52,7 +65,8 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     # Timestamped because an untimestamped log cannot separate one run from the
-    # next, which cost a full afternoon of misdiagnosis once.
+    # next, which cost a full afternoon of misdiagnosis once. See ts() for why
+    # the date is included.
     #
     # `quiet` suppresses this for a request already logged with a reason by a
     # refusal path: send_error() calls log_error() -> log_message(), which
@@ -61,7 +75,7 @@ class Handler(BaseHTTPRequestHandler):
         if getattr(self, "quiet", False):
             return
         sys.stderr.write(
-            "%s %s %s\n" % (time.strftime("%H:%M:%S"), self.command, self.path)
+            "%s %s %s\n" % (ts(), self.command, self.path)
         )
 
     def proxy(self):
@@ -109,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
             # tracebacks from one measurement batch bury anything real.
             sys.stderr.write(
                 "%s %s %s CLIENT GONE (disconnected mid-stream)\n"
-                % (time.strftime("%H:%M:%S"), self.command, self.path)
+                % (ts(), self.command, self.path)
             )
             self.close_connection = True
         finally:
@@ -127,7 +141,7 @@ class Handler(BaseHTTPRequestHandler):
         if scheme != "http" or host not in HTTP_ALLOW:
             sys.stderr.write(
                 "%s %s %s REFUSED (not in HTTP_ALLOW)\n"
-                % (time.strftime("%H:%M:%S"), self.command, self.path)
+                % (ts(), self.command, self.path)
             )
             self.quiet = True
             self.send_error(403, "host not permitted")
@@ -147,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as e:
             sys.stderr.write(
                 "%s %s %s FAILED (%s)\n"
-                % (time.strftime("%H:%M:%S"), self.command, self.path, e)
+                % (ts(), self.command, self.path, e)
             )
             self.send_error(502, "upstream unreachable")
             return
@@ -168,7 +182,7 @@ class Handler(BaseHTTPRequestHandler):
         except OSError as e:
             sys.stderr.write(
                 "%s %s %s TRUNCATED (%s)\n"
-                % (time.strftime("%H:%M:%S"), self.command, self.path, e)
+                % (ts(), self.command, self.path, e)
             )
             conn.close()
             return
@@ -191,7 +205,7 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             sys.stderr.write(
                 "%s %s %s CLIENT GONE (disconnected)\n"
-                % (time.strftime("%H:%M:%S"), self.command, self.path)
+                % (ts(), self.command, self.path)
             )
             self.close_connection = True
 
@@ -212,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
         if host not in CONNECT_ALLOW or port != "443":
             sys.stderr.write(
                 "%s CONNECT %s REFUSED (not in allowlist)\n"
-                % (time.strftime("%H:%M:%S"), self.path)
+                % (ts(), self.path)
             )
             self.quiet = True
             self.send_error(403, "host not permitted")
@@ -221,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
             upstream = socket.create_connection((host, 443), timeout=30)
         except OSError as e:
             sys.stderr.write(
-                "%s CONNECT %s FAILED (%s)\n" % (time.strftime("%H:%M:%S"), self.path, e)
+                "%s CONNECT %s FAILED (%s)\n" % (ts(), self.path, e)
             )
             self.send_error(502, "upstream unreachable")
             return
