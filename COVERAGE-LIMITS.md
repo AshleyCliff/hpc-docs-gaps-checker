@@ -320,6 +320,46 @@ Known assumptions:
   explicitly rules out. A docs page naming a charm that never existed in any
   pinned repo, and is not on the retired list, is invisible to this check
   until that list is created.
+- **A charm the docs tell you to deploy, but which no Core repo declares, is
+  invisible to `charm-inventory` in both directions.** This follows from the two
+  bullets above but is sharper than either, so it is recorded separately.
+  `doc_claims.py` searches only for the thirteen names the code side declares, and
+  `phantom-charm` candidates are restricted to those same names plus the
+  (nonexistent) retired list. A charm named *only* in the docs therefore produces
+  no claim and no finding — it is not in the search set at all.
+
+  **Observed 2026-10-21** against the `746aa2ba` docs pin: six charms carry a
+  `juju deploy` instruction in the docs yet appear nowhere in
+  `reference/underlying-projects-and-dependencies.md`, the page whose own stated
+  purpose is to list the projects and charms that "drive and manage the operations
+  of a Charmed HPC cluster":
+
+  | Charm | Deploy instruction |
+  |---|---|
+  | `self-signed-certificates` | `howto/deploy/deploy-identity-provider.md:79` |
+  | `ldap-integrator` | `howto/deploy/deploy-identity-provider.md:414` |
+  | `manual-tls-certificates` | `howto/deploy/deploy-identity-provider.md:672` |
+  | `openssh` | `howto/deploy/deploy-identity-provider.md:840` |
+  | `smtp-integrator` | `howto/integrate/integrate-with-email.md:38` |
+  | `microceph`, `ceph-fs` | `getting-started.md:172`, `:177` |
+
+  These are **not** missing `manifest.yaml` entries. The docs' own Core table
+  lists exactly the seven repos already pinned, and classifies the Authentik
+  charms under Dependencies — "not maintained directly as part of Charmed HPC" —
+  so these charms sit on the far side of the ownership line in `AGENTS.md`.
+  Cloning them would pull dependency internals into scope, which §4 and
+  `AGENTS.md` both exclude. What *is* in scope is the inconsistency itself: the
+  docs own both the deploy instruction and the register, and the two disagree.
+
+  **Status: Deferred**, with a spec written — `specs/deploy-register-consistency.md`.
+  That check is a different shape from `phantom-charm`: it asks whether a charm the
+  docs deploy is accounted for in the docs' own register, which is a docs-internal
+  consistency question needing no code-side fact and no Charmhub query.
+
+  One caveat on the evidence above: absence was established by text search, so
+  §2 applies — a name supplied through `myst_substitutions` or an `{include}`
+  would not be seen. The six are plain literals in fenced `juju deploy` commands,
+  which makes a substitution unlikely but not excluded.
 
 **Mitigation to build:** extractors should report *what they skipped* — unparsed
 code-block languages, tables whose shape was not recognised, files matching a
