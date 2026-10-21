@@ -32,7 +32,9 @@
     "external_directory": {
       "*": "ask",
       "/tmp/**": "allow",
-      "/inputs/**": "allow"
+      "/inputs/**": "allow",
+      "/etc/**": "allow",
+      "/proc/**": "allow"
     },
     "edit": {
       "*": "allow",

@@ -60,9 +60,31 @@ RC=$?
 echo "--- last 40 lines ---"
 tail -40 "$LOG" 2>/dev/null || echo "(log empty)"
 echo
+
+# A PERMISSION REFUSAL EXITS 0, WHICH IS THE BUG THIS BLOCK FIXES.
+#
+# Observed twice on 2026-10-21: the agent probed /etc, OpenCode's
+# `external_directory` default of "ask" auto-rejected it in an unattended run,
+# and the session ended early -- but `workshop run` had itself succeeded, so RC
+# was 0 and the wrapper printed "run completed". Both runs were initially
+# misdiagnosed as the startup stall in OPEN-ISSUE-opencode-startup-stall.md,
+# which cost real time and two wrong hypotheses.
+#
+# The refusal line is the single most useful line in an unattended run (which is
+# why AGENTS.md insists on 2>&1), so detect it and fail loudly rather than
+# letting a halted session look like a clean one.
+REFUSALS=$(grep -c 'auto-rejecting\|rejected permission' "$LOG" 2>/dev/null || echo 0)
+
 echo "exit status: ${RC}"
 case "$RC" in
-  0)   echo "run completed" ;;
+  0)   if [ "$REFUSALS" -gt 0 ]; then
+         echo "INCOMPLETE: ${REFUSALS} permission refusal(s) -- the session halted early."
+         echo "This is NOT the startup stall: the agent reached the model and was working."
+         echo "Grep the log for 'auto-rejecting' and enumerate that path in opencode.json."
+         RC=2
+       else
+         echo "run completed"
+       fi ;;
   124) echo "TIMED OUT after ${TIMEOUT}s -- the session may have been working;"
        echo "check the log tail above and whether files were written." ;;
   *)   echo "run exited non-zero; the full transcript is in the log." ;;
