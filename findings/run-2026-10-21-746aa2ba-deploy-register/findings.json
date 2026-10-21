@@ -1,0 +1,260 @@
+{
+  "check": "deploy-register",
+  "run": {
+    "date": "2026-10-21",
+    "extractor_version": "1.0.0",
+    "repos": [
+      {
+        "name": "apptainer-operator",
+        "repo": "canonical/apptainer-operator",
+        "kind": "charm",
+        "sha": "8f8af3805160c376853ddf2f9039d9af5b793fba"
+      },
+      {
+        "name": "charmed-hpc-libs",
+        "repo": "canonical/charmed-hpc-libs",
+        "kind": "library",
+        "sha": "238d24f5199f7cf9b0c66bce5944d1f96655b621"
+      },
+      {
+        "name": "charmed-hpc-terraform",
+        "repo": "canonical/charmed-hpc-terraform",
+        "kind": "terraform",
+        "sha": "74094c247541b4eaad16e98e336a79c27bbd39e6"
+      },
+      {
+        "name": "docs",
+        "repo": "canonical/charmed-hpc-docs",
+        "kind": "docs",
+        "sha": "746aa2baf6922819e35cd9600624cb61bbe8519a"
+      },
+      {
+        "name": "filesystem-charms",
+        "repo": "canonical/filesystem-charms",
+        "kind": "charm-monorepo",
+        "sha": "7f706b40228a136bad15e6d9528c6942d09ca763"
+      },
+      {
+        "name": "slurm-charms",
+        "repo": "canonical/slurm-charms",
+        "kind": "charm-monorepo",
+        "sha": "c80ca6f25b228ac1507e3b703833c0c3639f9b8c"
+      },
+      {
+        "name": "slurmutils",
+        "repo": "canonical/slurmutils",
+        "kind": "library",
+        "sha": "ea29e57a12807d72a2645a669aa8990860bfde7a"
+      },
+      {
+        "name": "sssd-operator",
+        "repo": "canonical/sssd-operator",
+        "kind": "charm",
+        "sha": "3b944e327fb22bbc5a4c2b15cbcb80359754bc3d"
+      }
+    ]
+  },
+  "findings": {
+    "unregistered-deployed-charm": [
+      {
+        "id": "deploy-register:ceph-fs:ce0311a7",
+        "check": "deploy-register",
+        "kind": "unregistered-deployed-charm",
+        "subject": "ceph-fs",
+        "severity": "missing-entry",
+        "name": "ceph-fs",
+        "deploy_citations": [
+          {
+            "file": "getting-started.md",
+            "line": 177
+          }
+        ],
+        "register_citations": []
+      },
+      {
+        "id": "deploy-register:ldap-integrator:0f6525aa",
+        "check": "deploy-register",
+        "kind": "unregistered-deployed-charm",
+        "subject": "ldap-integrator",
+        "severity": "missing-entry",
+        "name": "ldap-integrator",
+        "deploy_citations": [
+          {
+            "file": "howto/deploy/deploy-identity-provider.md",
+            "line": 414
+          }
+        ],
+        "register_citations": []
+      },
+      {
+        "id": "deploy-register:lustre-server:3ee065fc",
+        "check": "deploy-register",
+        "kind": "unregistered-deployed-charm",
+        "subject": "lustre-server",
+        "severity": "missing-entry",
+        "name": "lustre-server",
+        "deploy_citations": [
+          {
+            "file": "explanation/lustre.md",
+            "line": 71
+          },
+          {
+            "file": "explanation/lustre.md",
+            "line": 78
+          },
+          {
+            "file": "howto/deploy/deploy-lustre.md",
+            "line": 33
+          },
+          {
+            "file": "howto/deploy/deploy-lustre.md",
+            "line": 70
+          }
+        ],
+        "register_citations": []
+      },
+      {
+        "id": "deploy-register:manual-tls-certificates:c64fdab5",
+        "check": "deploy-register",
+        "kind": "unregistered-deployed-charm",
+        "subject": "manual-tls-certificates",
+        "severity": "missing-entry",
+        "name": "manual-tls-certificates",
+        "deploy_citations": [
+          {
+            "file": "howto/deploy/deploy-identity-provider.md",
+            "line": 672
+          }
+        ],
+        "register_citations": []
+      },
+      {
+        "id": "deploy-register:microceph:11195f57",
+        "check": "deploy-register",
+        "kind": "unregistered-deployed-charm",
+        "subject": "microceph",
+        "severity": "missing-entry",
+        "name": "microceph",
+        "deploy_citations": [
+          {
+            "file": "getting-started.md",
+            "line": 172
+          }
+        ],
+        "register_citations": []
+      },
+      {
+        "id": "deploy-register:openssh:244bcf10",
+        "check": "deploy-register",
+        "kind": "unregistered-deployed-charm",
+        "subject": "openssh",
+        "severity": "missing-entry",
+        "name": "openssh",
+        "deploy_citations": [
+          {
+            "file": "howto/deploy/deploy-identity-provider.md",
+            "line": 840
+          }
+        ],
+        "register_citations": []
+      },
+      {
+        "id": "deploy-register:self-signed-certificates:8febbcbe",
+        "check": "deploy-register",
+        "kind": "unregistered-deployed-charm",
+        "subject": "self-signed-certificates",
+        "severity": "missing-entry",
+        "name": "self-signed-certificates",
+        "deploy_citations": [
+          {
+            "file": "howto/deploy/deploy-identity-provider.md",
+            "line": 79
+          }
+        ],
+        "register_citations": []
+      },
+      {
+        "id": "deploy-register:smtp-integrator:cb2c1f23",
+        "check": "deploy-register",
+        "kind": "unregistered-deployed-charm",
+        "subject": "smtp-integrator",
+        "severity": "missing-entry",
+        "name": "smtp-integrator",
+        "deploy_citations": [
+          {
+            "file": "howto/integrate/integrate-with-email.md",
+            "line": 38
+          }
+        ],
+        "register_citations": []
+      }
+    ]
+  },
+  "counts": {
+    "deploy_instructions": 47,
+    "register_entries": 57,
+    "unregistered_deployed_charm_findings": 8
+  },
+  "skipped": {
+    "doc_claims": {
+      "unparseable_deploy_target": [],
+      "unrecognised_register_table": [],
+      "unreadable_file": [],
+      "excluded_by_scope": {
+        "count": 10,
+        "paths": [
+          ".agents/skills/add-meta-description/SKILL.md",
+          ".agents/skills/generate-prometheus-alerts-reference/SKILL.md",
+          ".agents/skills/update-landing-pages/SKILL.md",
+          ".agents/skills/update-sphinx-stack/SKILL.md",
+          ".github/pull_request_template.md",
+          "CONTRIBUTING.md",
+          "README.md",
+          "contributing/code.md",
+          "contributing/documentation.md",
+          "contributing/index.md"
+        ]
+      },
+      "unreliable_fence_classification": [
+        {
+          "file": "howto/deploy/deploy-identity-provider.md",
+          "line": 815,
+          "reason": "fence close ':'x4 did not match open stack [(5, 'tab-set'), (4, 'tab-item'), (3, 'dropdown')]"
+        },
+        {
+          "file": "howto/deploy/deploy-identity-provider.md",
+          "line": 817,
+          "reason": "fence close ':'x5 did not match open stack [(5, 'tab-set'), (4, 'tab-item'), (3, 'dropdown')]"
+        },
+        {
+          "file": "howto/deploy/deploy-identity-provider.md",
+          "line": null,
+          "reason": "unclosed fence(s) at EOF: [(5, 'tab-set'), (4, 'tab-item'), (3, 'dropdown')]"
+        },
+        {
+          "file": "howto/deploy/deploy-slurm.md",
+          "line": 282,
+          "reason": "fence close ':'x4 did not match open stack []"
+        },
+        {
+          "file": "howto/deploy/deploy-slurm.md",
+          "line": 284,
+          "reason": "fence close ':'x5 did not match open stack []"
+        }
+      ]
+    },
+    "diff": {
+      "registered_but_never_deployed": {
+        "count": 6,
+        "names": [
+          "alertmanager-k8s",
+          "catalogue-k8s",
+          "grafana-k8s",
+          "loki-k8s",
+          "mysql-router",
+          "prometheus-k8s"
+        ]
+      }
+    }
+  }
+}
