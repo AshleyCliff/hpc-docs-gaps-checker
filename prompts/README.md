@@ -28,9 +28,25 @@ So operator-facing notes live **here**, keyed by filename. Prompt files stay pur
 |---|---|---|
 | `charm-inventory-step0.md` | Step 0 gate only: verifies the pinned SHAs and the three survey facts, writes `findings/step0-charm-inventory.json`, stops. | cheap |
 | `charm-inventory.md` | The full check: Step 0, then implement `code_facts.py`, `doc_claims.py`, `diff.py`, `render.py`, plus tests. | a full session |
+| `deploy-register-step0.md` | Step 0 gate only for `deploy-register`: verifies the docs SHA and the register's table shape, writes `findings/step0-deploy-register.json`, stops. | cheap |
+| `deploy-register.md` | The full check per `specs/deploy-register-consistency.md`: Step 0, then extend the extractors, plus tests. | a full session |
 
-Use the Step 0 prompt to verify a config change — a permission rule, a model
+Use a Step 0 prompt to verify a config change — a permission rule, a model
 switch, a moved pin — without paying for an implementation attempt.
+
+### A note on `deploy-register.md`
+
+Unlike `charm-inventory.md`, this prompt asks the agent to **extend** working code
+rather than write from scratch. Two consequences worth knowing before a run:
+
+- It must not fork `doc_claims.py` and `diff.py` into parallel per-check copies.
+  The prompt leaves the mechanism open (a `--check` selector, or a shared-helper
+  module) but requires the agent to state which it chose and why, and requires the
+  existing `charm-inventory` tests to still pass. Check both in the final message.
+- Run it on **Sonnet 5**, not the cheap model. It looks like imitation work, but it
+  introduces a `csv-table` body parser that the later config-options and actions
+  checks will inherit — so per the model table in `AGENTS.md` it sets a convention
+  rather than copying one.
 
 ## Invoking
 

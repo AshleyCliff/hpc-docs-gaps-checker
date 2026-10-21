@@ -242,24 +242,58 @@ Observed before implementation, so the extractor can be checked against them.
 **These are expectations, not test fixtures** — tests run against committed
 fixtures under `tests/fixtures/`, never against `/inputs`.
 
-| Charm | Deploy instruction |
-|---|---|
-| `self-signed-certificates` | `howto/deploy/deploy-identity-provider.md:79` |
-| `ldap-integrator` | `howto/deploy/deploy-identity-provider.md:414` |
-| `manual-tls-certificates` | `howto/deploy/deploy-identity-provider.md:672` |
-| `openssh` | `howto/deploy/deploy-identity-provider.md:840` |
-| `smtp-integrator` | `howto/integrate/integrate-with-email.md:38` |
-| `microceph` | `getting-started.md:172` |
-| `ceph-fs` | `getting-started.md:177` |
+**Eight findings**, confirmed by the implemented check on 2026-10-21:
 
-If a real run produces a materially different set, **report the divergence rather
+| Charm | Deploy instruction | Owner |
+|---|---|---|
+| `self-signed-certificates` | `howto/deploy/deploy-identity-provider.md:79` | dependency |
+| `ldap-integrator` | `howto/deploy/deploy-identity-provider.md:414` | dependency |
+| `manual-tls-certificates` | `howto/deploy/deploy-identity-provider.md:672` | dependency |
+| `openssh` | `howto/deploy/deploy-identity-provider.md:840` | dependency |
+| `smtp-integrator` | `howto/integrate/integrate-with-email.md:38` | dependency |
+| `microceph` | `getting-started.md:172` | dependency |
+| `ceph-fs` | `getting-started.md:177` | dependency |
+| **`lustre-server`** | `explanation/lustre.md:71`, `:78`; `howto/deploy/deploy-lustre.md:33`, `:70` | **Core (`filesystem-charms`)** |
+
+### The eighth was found by the gate, not by the spec author
+
+This table originally listed **seven**. The Step 0 gate run on 2026-10-21 reported
+eight, flagged the difference rather than quietly matching the spec, and was right:
+`lustre-server` is absent from the register entirely. Corrected here after
+independent verification (`grep lustre
+reference/underlying-projects-and-dependencies.md` returns nothing).
+
+This is worth preserving as the clearest evidence the gate earns its cost — the
+spec was wrong, the mechanism caught it, and the instruction to report divergence
+rather than reconcile it is what made that visible.
+
+**`lustre-server` is also the highest-value finding of the eight**, and the only
+one whose severity reasoning differs. The other seven are dependency charms, where
+the gap is a register omission about someone else's software. `lustre-server` is
+maintained in `filesystem-charms`, one of the seven pinned Core repos — so the docs
+ship a deploy how-to for a charm Charmed HPC owns while the register that claims to
+list what "drive[s] and manage[s] the operations of a Charmed HPC cluster" does not
+mention it. Note it sits beside `charm-inventory`'s `lustre-server-proxy` finding:
+the register omits *both* Lustre charms while listing the other three filesystem
+charms.
+
+Severity is still `missing-entry` for all eight — assigned deterministically from
+the kind, per `AGENTS.md`. Do not special-case it. The ownership distinction is
+triage context for a human, not an extractor input.
+
+If a future run produces a materially different set, **report the divergence rather
 than reconciling it.** A mismatch means either the pin moved or the parser is
 wrong, and both are findings about the process.
 
 Charms expected to be correctly registered, and so to produce no finding:
 `authentik-server`, `authentik-worker`, `authentik-ldap-outpost`, `postgresql-k8s`,
 `traefik-k8s`, `sssd`, `apptainer`, `mysql`, `influxdb`,
-`opentelemetry-collector`, and the Slurm and filesystem charms.
+`opentelemetry-collector`, and the Slurm and remaining filesystem charms.
+
+Six charms are registered but never deployed anywhere in scope — `alertmanager-k8s`,
+`catalogue-k8s`, `grafana-k8s`, `loki-k8s`, `mysql-router`, `prometheus-k8s`. This
+is **legitimate and not a finding**, per "`diff.py` — one set difference" above; it
+is reported as an observation under `skipped.registered_but_never_deployed`.
 
 ---
 
@@ -298,6 +332,54 @@ must be loud.**
 As `charm-inventory`: resolved SHAs for all eight repos from `manifest.lock`, the
 extractor version, and the check ID. No model name or prompt hash — this check is
 deterministic. Omit rather than fake them.
+
+### Output paths
+
+**This section was missing from the first version of this spec**, and the omission
+was found the hard way: an implementing agent grepped for it, found nothing, and
+had to improvise — which is exactly the under-specification this spec's own
+constraints tell an agent to stop and report. It is recorded here now so the next
+check inherits a stated convention rather than rediscovering one.
+
+This check has **no code side**, so its intermediates cannot share
+`charm-inventory`'s filenames. Both checks write into the same `findings/`
+directory, so each filename carries the check name:
+
+```
+findings/doc-claims-deploy-register.json     # claims: deploy-instruction + register-entry
+findings/deltas-deploy-register.json         # findings: unregistered-deployed-charm
+```
+
+`render.py` takes `findings/` plus `--check deploy-register` and **creates the run
+directory itself**, suffixed so the two checks' runs sit side by side rather than
+overwriting each other:
+
+```
+findings/run-<YYYY-MM-DD>-<docs-sha-first-8>-deploy-register/
+├── report.md
+└── findings.json
+```
+
+`<docs-sha-first-8>` is the first 8 chars of the `docs` SHA from `manifest.lock`,
+matching `specs/charm-inventory.md`. The docs pin identifies the run because the
+docs are the side being audited — and for this check, *both* sides are the docs.
+
+If the target directory already exists, **overwrite it**, so re-running the same
+pins is idempotent rather than accumulating near-duplicate directories.
+
+The flat intermediates are gitignored; the run directory is committed. See
+`findings/README.md`.
+
+### Wiring into `workshop.yaml`
+
+The `extract` and `report` actions must run **both** checks, with `charm-inventory`
+first — its `code-facts.json` supplies `doc_claims.py --names-from`, which
+`deploy-register` does not use but the existing check does. Keep `set -e` so a
+failing stage does not leave a stale downstream file looking like a successful run.
+
+Note the argument asymmetry, which is deliberate rather than an oversight:
+`diff.py` takes two positional files for `charm-inventory` (code facts and doc
+claims) but **one** for `deploy-register`, because there is no code side.
 
 ---
 

@@ -2,13 +2,33 @@
 
 **Status: STILL OPEN — intermittent, and currently NOT REPRODUCIBLE ON DEMAND.**
 
-Latest data (2026-10-02): the stall recurred once on the long implementation
-prompt, then **11 of 11** subsequent runs with that same prompt passed. Combined
-with 20/20 on the short prompt over the preceding two days, that is **31 of the
-last 32 runs passing**, against a historical 42.6% failure rate.
+Latest data (2026-10-21): **two stalls in two consecutive attempts**, both using
+the canonical `workshop run … | tee` form from a real shell. Three further
+attempts in the same session used `run-agent.sh` and all three reached the model.
 
-So the stall is real and still occurring, but rare enough now that there is **no
-reproducer** — which is the main obstacle to diagnosing it. See
+That raises a concrete hypothesis — that the canonical form's lack of
+`--foreground` and stdin redirection is responsible for part of the historical
+rate — but 3/3 and 0/2 are far too small to settle it. See
+[Session 2026-10-21](#session-2026-10-21-three-failure-modes-two-of-them-misdiagnosed-as-this-stall).
+
+**Before diagnosing anything as this stall, rule out the two impostors.** The same
+session produced a permission refusal and a wrapper timeout, both of which were
+initially misread as stalls by an agent that had read this file. The quick tests:
+
+| Check | If it fails |
+|---|---|
+| `grep auto-rejecting` the transcript | Permission refusal, not a stall |
+| Was `opencode.log` written at all? | OpenCode never started — environment fault |
+| Two CPU samples 20s apart | Rising counter means it is working, not wedged |
+| Any `POST /api/v1/chat/completions` after the run began? | No → never reached the model |
+
+Prior data (2026-10-02): the stall recurred once on the long implementation
+prompt, then **11 of 11** subsequent runs with that same prompt passed. Combined
+with 20/20 on the short prompt over the preceding two days, that was **31 of 32
+runs passing**, against a historical 42.6% failure rate.
+
+So the stall is real and still occurring, and there is still **no reproducer** —
+the main obstacle to diagnosing it. See
 [Recurrence: 2026-10-02](#recurrence-2026-10-02).
 
 Two cautions for whoever picks this up:
@@ -30,6 +50,99 @@ before trusting any number in it — several were contaminated by premature kill
 by mistaking short success streaks for fixes.
 
 When resolved, fold the outcome into `AGENTS.md` and delete this file.
+
+---
+
+## Session 2026-10-21: three failure modes, two of them misdiagnosed as this stall
+
+Five agent-run attempts in one session produced **three distinct failures**, only
+two of which were this stall. Recorded because the misdiagnoses were made by an
+agent reading this very file — so the file was not, on its own, enough to prevent
+them.
+
+| # | Invocation | Outcome | Actual cause |
+|---|---|---|---|
+| 1 | `run-agent.sh` (step0) | **passed** | — |
+| 2 | direct `\| tee`, from a real shell | stalled | **this stall** |
+| 3 | direct `\| tee`, from a real shell | stalled | **this stall** |
+| 4 | `run-agent.sh` | halted at 13 min | **permission refusal** |
+| 5 | `run-agent.sh`, detached | killed at 45 min | **wrapper `timeout` expired** |
+
+Attempts 2 and 3 are genuine: `CONNECT models.opencode.ai` in the proxy log, then
+no `POST /api/v1/chat/completions` ever, CPU frozen, process alive. The signature
+in [Symptom](#symptom), unchanged.
+
+### The SIGTTIN fix is in `stall-rate.sh` and `run-agent.sh` but NOT in the
+canonical form
+
+This is the most actionable finding of the session. `run-agent.sh` passes
+`--foreground` and stdin from `/dev/null`; the canonical form in `AGENTS.md`
+(`workshop run … \| tee …`) does **neither**. In this session the wrapper reached
+the model 3/3 and the direct form 0/2.
+
+That is far too small a sample to claim a cause, and the direct form has a long
+history of working. But it is a concrete, testable hypothesis for part of the
+historical rate, and it costs nothing to prefer the wrapper meanwhile. **Do not
+read 3/3 as a fix** — that error has been made four times in this file already.
+
+### A permission refusal ends a session and exits 0
+
+Attempt 4 was **not** a stall: it reached the model, ran 17 steps over 13 minutes,
+wrote files, then stopped dead. Cause, visible only in the transcript:
+
+```
+! permission requested: external_directory (/etc/*); auto-rejecting
+✗ whoami; hostname; cat /etc/hostname … failed
+Error: The user rejected permission to use this specific tool call.
+```
+
+The agent probed `/etc/hostname` for environment orientation.
+`external_directory` defaulted to `ask`, which **auto-rejects** unattended — the
+trap `AGENTS.md` names under "Unattended operation." `/inputs/**` and `/tmp/**`
+were allowed; `/etc/**` was not.
+
+Two things made this look like the stall, and both are now fixed:
+
+- **`workshop run` itself succeeded**, so the wrapper printed `exit status: 0` and
+  `run completed`. `run-agent.sh` now greps the log for refusals and reports
+  `INCOMPLETE` with exit 2 instead — a halted session must not look like a clean
+  one.
+- `opencode.json` now allows reads of `/etc/**` and `/proc/**`. `edit` remains
+  `deny` for `/inputs/**`; read-only enforcement is untouched.
+
+**The distinguishing check: grep the transcript for `auto-rejecting`.** Apply it
+before the `opencode.log` test, because a refused run *does* write `opencode.log`
+and so passes that test while still not being a stall.
+
+### Diagnosing on one CPU sample is not enough
+
+During attempt 3 a single `ps` reading showed 10s of CPU and was read as progress.
+A second sample 20s later showed the counter **frozen at 10s** — it had been
+accumulated at startup. One sample cannot distinguish a wedge from work.
+
+**Use two samples 20–25s apart, plus the proxy log.** Frozen counter and no `POST`
+is the stall; rising counter is a working run. A third signal — files written in
+the last few minutes — separates "working" from "looping," which matters because
+`doom_loop` is set to `allow` and a looping agent will not self-halt.
+
+### Things ruled out this session
+
+- **Not display sleep.** A screen blanking at ~14:40 was proposed as a cause. The
+  journal showed the only suspend all day was at **07:53**, hours before any
+  attempt. DPMS blanking does not suspend the host, freeze the container, or drop
+  connections.
+- **Not the host agent's tool-call lifecycle.** Also proposed, when attempt 4's
+  log looked truncated. Disproven by the refusal line, which names a different
+  cause entirely.
+
+### A logging gap that obstructs exactly this analysis
+
+`proxy.log` timestamps are **time-of-day only, with no date**, and the file is
+appended across sessions. Reconstructing one run's gaps therefore produces
+nonsense like `13:49:51 -> 14:49:51` where two different days interleave. The log
+exists for cross-run comparison (`findings/run-logs/README.md`), so this
+undermines its stated purpose. Adding a date to the timestamp in
+`openrouter-proxy.py` is a small, worthwhile fix — not yet done.
 
 ---
 
