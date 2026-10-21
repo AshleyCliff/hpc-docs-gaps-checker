@@ -17,9 +17,11 @@ __pycache__/
 # Extractor intermediates, written flat by the `extract` action. Reproducible
 # from the pinned SHAs, so they are not worth committing. The durable output is
 # findings/run-<date>-<sha>/, which IS tracked. See findings/README.md.
-findings/code-facts.json
-findings/doc-claims.json
-findings/deltas.json
+# Globbed rather than listed per check: a new check adds new intermediates, and
+# an exact-name list silently commits them (as happened with deploy-register).
+findings/code-facts*.json
+findings/doc-claims*.json
+findings/deltas*.json
 
 # Agent run transcripts. Verbose, disposable, and superseded by the structured
 # output in findings/. See findings/run-logs/README.md.
