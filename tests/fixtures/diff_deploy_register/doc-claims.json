@@ -1,0 +1,75 @@
+{
+  "check": "deploy-register",
+  "claims": [
+    {
+      "check": "deploy-register",
+      "kind": "deploy-instruction",
+      "name": "sssd",
+      "file": "docs/getting-started.md",
+      "line": 10,
+      "context": "code-block"
+    },
+    {
+      "check": "deploy-register",
+      "kind": "deploy-instruction",
+      "name": "orphan-charm",
+      "file": "docs/getting-started.md",
+      "line": 57,
+      "context": "code-block"
+    },
+    {
+      "check": "deploy-register",
+      "kind": "deploy-instruction",
+      "name": "orphan-charm",
+      "file": "docs/howto/deploy-echo-again.md",
+      "line": 8,
+      "context": "code-block"
+    },
+    {
+      "check": "deploy-register",
+      "kind": "deploy-instruction",
+      "name": "widget-project",
+      "file": "docs/getting-started.md",
+      "line": 41,
+      "context": "code-block"
+    },
+    {
+      "check": "deploy-register",
+      "kind": "register-entry",
+      "name": "widget-project",
+      "table": "dependencies",
+      "file": "docs/reference/underlying-projects-and-dependencies.md",
+      "line": 24
+    },
+    {
+      "check": "deploy-register",
+      "kind": "register-entry",
+      "name": "sssd",
+      "table": "machine-charms",
+      "file": "docs/reference/underlying-projects-and-dependencies.md",
+      "line": 44
+    },
+    {
+      "check": "deploy-register",
+      "kind": "register-entry",
+      "name": "widget-k8s",
+      "table": "kubernetes-charms",
+      "file": "docs/reference/underlying-projects-and-dependencies.md",
+      "line": 55
+    }
+  ],
+  "skipped": {
+    "unparseable_deploy_target": [],
+    "unrecognised_register_table": [],
+    "unreadable_file": [],
+    "excluded_by_scope": {"count": 0, "paths": []},
+    "unreliable_fence_classification": []
+  },
+  "counts": {
+    "md_files_scanned": 2,
+    "txt_files_scanned": 0,
+    "deploy_instructions_found": 4,
+    "register_entries_found": 3,
+    "claims_emitted": 7
+  }
+}

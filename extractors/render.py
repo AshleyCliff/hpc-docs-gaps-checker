@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Render the charm-inventory check's findings into a committed run directory.
+"""Render findings into a committed run directory, for either the
+`charm-inventory` or `deploy-register` check -- dispatched by `--check`
+(default `charm-inventory`, so existing callers are unaffected).
+
+## `charm-inventory` (default)
 
 Reads the flat intermediates written by the `extract` workshop action:
 
@@ -14,6 +18,24 @@ specs/charm-inventory.md "Output paths"):
     ├── report.md
     └── findings.json
 
+## `deploy-register`
+
+Reads a different pair of flat intermediates (deploy-register has no
+code-facts.json -- it needs no code-side fact, per
+specs/deploy-register-consistency.md):
+
+    <findings-dir>/doc-claims-deploy-register.json
+    <findings-dir>/deltas-deploy-register.json
+
+and writes, into a directory suffixed with the check name so it never
+collides with a same-day charm-inventory run against the same docs pin:
+
+    <findings-dir>/run-<YYYY-MM-DD>-<docs-sha-first-8>-deploy-register/
+    ├── report.md
+    └── findings.json
+
+---
+
 `<docs-sha-first-8>` comes from the `docs` entry in `manifest.lock` -- the
 docs pin identifies the run, since it is the side being audited.
 
@@ -22,7 +44,7 @@ pins is idempotent rather than accumulating near-duplicate directories).
 
 The reproducibility header carries the resolved SHAs for all eight repos (from
 manifest.lock), the extractor version, and the check ID -- per spec. Model
-name and prompt hash are omitted, not faked: this check has no LLM layer.
+name and prompt hash are omitted, not faked: neither check has an LLM layer.
 
 Deterministic except for the run date, which is UTC "today" by construction --
 re-running on the same day with the same pins overwrites in place; re-running
@@ -30,7 +52,8 @@ on a later day creates a new run directory even with unchanged pins, which is
 intended (the directory name is "when, against what," not a content hash).
 
 Usage:
-    render.py <findings-dir>   # e.g. findings/
+    render.py <findings-dir>                           # charm-inventory
+    render.py <findings-dir> --check deploy-register
 """
 
 from __future__ import annotations
@@ -41,13 +64,18 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-CHECK = "charm-inventory"
+CHECK_CHARM_INVENTORY = "charm-inventory"
+CHECK_DEPLOY_REGISTER = "deploy-register"
+
+CHECK = CHECK_CHARM_INVENTORY  # retained for backward compatibility
 
 # Bump this when code_facts.py, doc_claims.py, or diff.py's extraction logic
 # changes in a way that could change output for the same inputs. Not tied to
 # repo commit count or date -- a deliberate, hand-set version for this check's
-# pipeline as a whole.
+# pipeline as a whole. Each check's extractors version independently, since
+# they change on independent schedules.
 EXTRACTOR_VERSION = "1.0.0"
+EXTRACTOR_VERSION_DEPLOY_REGISTER = "1.0.0"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_LOCK = REPO_ROOT / "manifest.lock"
@@ -56,6 +84,11 @@ INTERMEDIATE_NAMES = {
     "code_facts": "code-facts.json",
     "doc_claims": "doc-claims.json",
     "deltas": "deltas.json",
+}
+
+INTERMEDIATE_NAMES_DEPLOY_REGISTER = {
+    "doc_claims": "doc-claims-deploy-register.json",
+    "deltas": "deltas-deploy-register.json",
 }
 
 
@@ -99,14 +132,21 @@ def fmt_citation(c: dict | None) -> str:
     return f"`{file}:{line}`" if line is not None else f"`{file}`"
 
 
-def render_header(repos: list[dict], run_date: str, sha8: str) -> str:
+def render_header(
+    repos: list[dict],
+    run_date: str,
+    sha8: str,
+    title: str = "Charm inventory",
+    check: str = CHECK_CHARM_INVENTORY,
+    extractor_version: str = EXTRACTOR_VERSION,
+) -> str:
     lines = [
-        f"# Charm inventory — run {run_date}-{sha8}",
+        f"# {title} — run {run_date}-{sha8}",
         "",
         "## Reproducibility",
         "",
-        f"- **Check ID:** `{CHECK}`",
-        f"- **Extractor version:** `{EXTRACTOR_VERSION}`",
+        f"- **Check ID:** `{check}`",
+        f"- **Extractor version:** `{extractor_version}`",
         f"- **Run date (UTC):** `{run_date}`",
         "",
         "| Repo | Resolved SHA |",
@@ -256,15 +296,209 @@ def render_report(
     return "\n".join(parts)
 
 
+# --- deploy-register rendering ------------------------------------------ #
+
+
+def render_deploy_register_findings_section(findings: list[dict]) -> str:
+    title = "Unregistered deployed charms (juju-deployed, no charm-table entry)"
+    lines = [f"## {title}", ""]
+    if not findings:
+        lines.append("None.")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append("| ID | Name | Severity | Deploy sites | Register context |")
+    lines.append("|---|---|---|---|---|")
+    for f in findings:
+        deploy_cites = f.get("deploy_citations") or []
+        register_cites = f.get("register_citations") or []
+        deploy_str = "; ".join(fmt_citation(c) for c in deploy_cites) if deploy_cites else "—"
+        register_str = (
+            "; ".join(fmt_citation(c) for c in register_cites) if register_cites else "—"
+        )
+        lines.append(
+            f"| `{f['id']}` | `{f['name']}` | {f['severity']} | {deploy_str} | {register_str} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_deploy_register_skip_report(doc_claims: dict, deltas: dict) -> str:
+    lines = ["## Skip report", ""]
+    lines.append(
+        "Per `AGENTS.md`'s \"report what you skipped\" convention: a zero "
+        "count below is a meaningful result, not an omission."
+    )
+    lines.append("")
+
+    dc_counts = doc_claims.get("counts", {})
+    dc_skipped = doc_claims.get("skipped", {})
+    lines.append("### Docs side (`doc_claims.py --check deploy-register`)")
+    lines.append("")
+    lines.append(f"- `.md` files scanned: **{dc_counts.get('md_files_scanned', '?')}**")
+    lines.append(f"- `.txt` files scanned: **{dc_counts.get('txt_files_scanned', '?')}**")
+    lines.append(
+        f"- Deploy instructions found: **{dc_counts.get('deploy_instructions_found', '?')}**"
+    )
+    lines.append(
+        f"- Register entries found: **{dc_counts.get('register_entries_found', '?')}**"
+    )
+    lines.append(
+        f"- Unparseable deploy targets: "
+        f"**{len(dc_skipped.get('unparseable_deploy_target', []))}**"
+    )
+    unrecognised = dc_skipped.get("unrecognised_register_table", [])
+    lines.append(
+        f"- Unrecognised register table rows: **{len(unrecognised)}** "
+        f"{'⚠️ MUST BE ZERO PER SPEC' if unrecognised else ''}".rstrip()
+    )
+    lines.append(
+        f"- Unreadable files: **{len(dc_skipped.get('unreadable_file', []))}**"
+    )
+    dc_excl = dc_skipped.get("excluded_by_scope", {})
+    lines.append(f"- Excluded by scope: **{dc_excl.get('count', 0)}**")
+    lines.append("")
+
+    diff_skipped = deltas.get("skipped", {})
+    registered_never_deployed = diff_skipped.get("registered_but_never_deployed", {})
+    lines.append("### Diff (`diff.py --check deploy-register`)")
+    lines.append("")
+    lines.append(
+        "- Register entries (charm tables) with no `juju deploy` instruction "
+        f"anywhere in scope: **{registered_never_deployed.get('count', 0)}** "
+        "-- expected and legitimate per spec, not a finding."
+    )
+    names = registered_never_deployed.get("names", [])
+    if names:
+        lines.append(f"  - {', '.join(f'`{n}`' for n in names)}")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def render_deploy_register_report(
+    repos: list[dict],
+    run_date: str,
+    sha8: str,
+    doc_claims: dict,
+    deltas: dict,
+) -> str:
+    parts = [
+        render_header(
+            repos,
+            run_date,
+            sha8,
+            title="Deploy/register consistency",
+            check=CHECK_DEPLOY_REGISTER,
+            extractor_version=EXTRACTOR_VERSION_DEPLOY_REGISTER,
+        )
+    ]
+
+    findings = deltas.get("findings", {})
+    parts.append(
+        render_deploy_register_findings_section(
+            findings.get("unregistered-deployed-charm", [])
+        )
+    )
+    parts.append(render_deploy_register_skip_report(doc_claims, deltas))
+
+    return "\n".join(parts)
+
+
+def run_deploy_register_render(findings_dir: Path) -> int:
+    doc_claims_path = findings_dir / INTERMEDIATE_NAMES_DEPLOY_REGISTER["doc_claims"]
+    deltas_path = findings_dir / INTERMEDIATE_NAMES_DEPLOY_REGISTER["deltas"]
+
+    for p, label in (
+        (doc_claims_path, INTERMEDIATE_NAMES_DEPLOY_REGISTER["doc_claims"]),
+        (deltas_path, INTERMEDIATE_NAMES_DEPLOY_REGISTER["deltas"]),
+    ):
+        if not p.exists():
+            print(
+                f"error: {label} not found at {p}; run the deploy-register "
+                "extract step first",
+                file=sys.stderr,
+            )
+            return 1
+
+    doc_claims = load_json(doc_claims_path, INTERMEDIATE_NAMES_DEPLOY_REGISTER["doc_claims"])
+    deltas = load_json(deltas_path, INTERMEDIATE_NAMES_DEPLOY_REGISTER["deltas"])
+
+    repos = load_manifest_lock()
+    sha8 = docs_sha(repos)[:8]
+    run_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    run_dir_name = f"run-{run_date}-{sha8}-deploy-register"
+    run_dir = findings_dir / run_dir_name
+
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True)
+
+    report_md = render_deploy_register_report(repos, run_date, sha8, doc_claims, deltas)
+    (run_dir / "report.md").write_text(report_md, encoding="utf-8")
+
+    findings_json = {
+        "check": CHECK_DEPLOY_REGISTER,
+        "run": {
+            "date": run_date,
+            "extractor_version": EXTRACTOR_VERSION_DEPLOY_REGISTER,
+            "repos": sorted(repos, key=lambda r: r["name"]),
+        },
+        "findings": deltas.get("findings", {}),
+        "counts": deltas.get("counts", {}),
+        "skipped": {
+            "doc_claims": doc_claims.get("skipped", {}),
+            "diff": deltas.get("skipped", {}),
+        },
+    }
+    (run_dir / "findings.json").write_text(
+        json.dumps(findings_json, indent=2, sort_keys=False) + "\n", encoding="utf-8"
+    )
+
+    print(f"wrote {run_dir}/report.md", file=sys.stderr)
+    print(f"wrote {run_dir}/findings.json", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: render.py <findings-dir>", file=sys.stderr)
+    # argv[0] is the script path (sys.argv convention, as the original
+    # single-check version used); findings-dir is argv[1]. An optional
+    # trailing `--check deploy-register` selects the other check -- parsed
+    # by hand rather than via argparse, since this is the only flag render.py
+    # takes and the existing positional-only usage (used by every committed
+    # test and by workshop.yaml's `report` action) must keep working
+    # unchanged.
+    positional = [a for a in argv[1:] if a != "--check" and a not in (CHECK_CHARM_INVENTORY, CHECK_DEPLOY_REGISTER)]
+    check = CHECK_CHARM_INVENTORY
+    if "--check" in argv[1:]:
+        i = argv.index("--check")
+        if i + 1 >= len(argv):
+            print("error: --check requires a value", file=sys.stderr)
+            return 2
+        check = argv[i + 1]
+        if check not in (CHECK_CHARM_INVENTORY, CHECK_DEPLOY_REGISTER):
+            print(
+                f"error: unknown --check value {check!r}; "
+                f"expected one of {CHECK_CHARM_INVENTORY!r}, {CHECK_DEPLOY_REGISTER!r}",
+                file=sys.stderr,
+            )
+            return 2
+
+    if len(positional) != 1:
+        print(
+            "usage: render.py <findings-dir> [--check deploy-register]",
+            file=sys.stderr,
+        )
         return 2
 
-    findings_dir = Path(argv[1])
+    findings_dir = Path(positional[0])
     if not findings_dir.is_dir():
         print(f"error: not a directory: {findings_dir}", file=sys.stderr)
         return 1
+
+    if check == CHECK_DEPLOY_REGISTER:
+        return run_deploy_register_render(findings_dir)
 
     code_facts_path = findings_dir / INTERMEDIATE_NAMES["code_facts"]
     doc_claims_path = findings_dir / INTERMEDIATE_NAMES["doc_claims"]

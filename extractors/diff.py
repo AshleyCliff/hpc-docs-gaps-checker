@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Diff code facts against doc claims for the `charm-inventory` check.
+"""Diff doc_claims.py output for the `charm-inventory` and `deploy-register`
+checks, dispatched by `--check` (default `charm-inventory`, so existing
+callers and `workshop.yaml`'s `extract` action are unaffected).
+
+## `charm-inventory` (default)
 
 Two set operations, per specs/charm-inventory.md "diff.py -- two set
 differences":
@@ -18,15 +22,33 @@ Fixture-suspect charms (fixture_suspect: true in code-facts.json) are
 reported separately under their own section -- never mixed into
 undocumented-charm findings. See "Fixture charms" in the spec.
 
-ID derivation follows specs/finding-ids.md exactly:
+Usage:
+    diff.py <code-facts.json> <doc-claims.json> [--retired-charms <file>]
+
+## `deploy-register`
+
+One set operation, per specs/deploy-register-consistency.md "diff.py -- one
+set difference":
+
+    unregistered-deployed-charm   a juju-deploy target absent from a charm
+                                  table (machine-charms / kubernetes-charms)
+                                  severity: missing-entry
+
+Per "Two namespaces" in the spec, only the two *charm* tables satisfy a
+deploy instruction -- register entries from the four *project* tables (core,
+dependencies, optional-dependencies, integrations) are context only. The
+reverse direction (a register entry never deployed) is deliberately not a
+finding -- see `skipped.registered_but_never_deployed`.
+
+Usage:
+    diff.py <doc-claims.json> --check deploy-register
+
+ID derivation follows specs/finding-ids.md exactly for both checks:
 
     id = <check>:<subject>:<hash8>
     hash8 = sha256("<check>\\x1f<kind>\\x1f<subject>")[:8] (hex)
 
 Deterministic: no network, no clock, no model.
-
-Usage:
-    diff.py <code-facts.json> <doc-claims.json> [--retired-charms <file>]
 
 Prints a single JSON object to stdout.
 """
@@ -40,19 +62,30 @@ import re
 import sys
 from pathlib import Path
 
-CHECK = "charm-inventory"
+CHECK_CHARM_INVENTORY = "charm-inventory"
+CHECK_DEPLOY_REGISTER = "deploy-register"
+
+CHECK = CHECK_CHARM_INVENTORY  # retained for backward compatibility
 
 # specs/finding-ids.md "The rule" / "Normalising <subject>".
 _SUBJECT_INVALID_RUN_RE = re.compile(r"[^a-z0-9.-]+")
 
 KIND_UNDOCUMENTED = "undocumented-charm"
 KIND_PHANTOM = "phantom-charm"
+KIND_UNREGISTERED_DEPLOYED = "unregistered-deployed-charm"
 
-# specs/charm-inventory.md "diff.py -- two set differences".
+# specs/charm-inventory.md "diff.py -- two set differences";
+# specs/deploy-register-consistency.md "diff.py -- one set difference".
 SEVERITY_BY_KIND = {
     KIND_UNDOCUMENTED: "missing-entry",
     KIND_PHANTOM: "wrong-value",
+    KIND_UNREGISTERED_DEPLOYED: "missing-entry",
 }
+
+# specs/deploy-register-consistency.md "Two namespaces, and why they must
+# not be merged": only these two register tables hold charm names, and only
+# an entry from one of them satisfies a deploy instruction.
+CHARM_TABLES = {"machine-charms", "kubernetes-charms"}
 
 
 class SubjectEmptyError(RuntimeError):
@@ -245,8 +278,80 @@ def build_fixture_section(code_facts: list[dict], mentioned_names: set[str]) -> 
     return rows
 
 
-def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+def build_unregistered_deployed_findings(doc_claims: list[dict]) -> tuple[list[dict], dict]:
+    """specs/deploy-register-consistency.md "diff.py -- one set difference".
+
+    `doc_claims` is deploy-register's claims list: a mix of
+    `deploy-instruction` and `register-entry` claims (see
+    doc_claims.py's `run_deploy_register`).
+
+    Returns (findings, skip-report-fragment). The skip fragment carries
+    `registered_but_never_deployed` -- the spec's required observation, not
+    a finding, per "The reverse direction is deliberately not a finding."
+    That population is charm-table register entries (machine-charms,
+    kubernetes-charms) only, since those are the only entries a deploy
+    instruction could ever satisfy -- see "Two namespaces" in the spec.
+    """
+    deploy_claims = [c for c in doc_claims if c["kind"] == "deploy-instruction"]
+    register_claims = [c for c in doc_claims if c["kind"] == "register-entry"]
+
+    charm_register_names: set[str] = set()
+    all_register_by_name: dict[str, list[dict]] = {}
+    for c in register_claims:
+        all_register_by_name.setdefault(c["name"], []).append(c)
+        if c["table"] in CHARM_TABLES:
+            charm_register_names.add(c["name"])
+
+    deploy_by_name: dict[str, list[dict]] = {}
+    for c in deploy_claims:
+        deploy_by_name.setdefault(c["name"], []).append(c)
+
+    findings: list[dict] = []
+    for name, claims in deploy_by_name.items():
+        if name in charm_register_names:
+            continue  # satisfied by a charm-table entry
+
+        subject = normalise_subject(name)
+        deploy_citations = sorted(
+            (citation(c["file"], c["line"]) for c in claims),
+            key=lambda c: (c["file"], c["line"]),
+        )
+        # "the nearest register context" -- any register entry sharing this
+        # name, even from a non-charm (project) table, is useful triage
+        # context even though it does not satisfy the deploy instruction.
+        # Empty when the name appears nowhere in the register at all.
+        register_citations = sorted(
+            (citation(c["file"], c["line"]) for c in all_register_by_name.get(name, [])),
+            key=lambda c: (c["file"], c["line"]),
+        )
+        findings.append(
+            {
+                "id": finding_id(CHECK_DEPLOY_REGISTER, KIND_UNREGISTERED_DEPLOYED, subject),
+                "check": CHECK_DEPLOY_REGISTER,
+                "kind": KIND_UNREGISTERED_DEPLOYED,
+                "subject": subject,
+                "severity": SEVERITY_BY_KIND[KIND_UNREGISTERED_DEPLOYED],
+                "name": name,
+                "deploy_citations": deploy_citations,
+                "register_citations": register_citations,
+            }
+        )
+    findings.sort(key=lambda f: f["id"])
+
+    charm_table_names_never_deployed = sorted(
+        charm_register_names - set(deploy_by_name.keys())
+    )
+    skip_fragment = {
+        "registered_but_never_deployed": {
+            "count": len(charm_table_names_never_deployed),
+            "names": charm_table_names_never_deployed,
+        },
+    }
+    return findings, skip_fragment
+
+
+def main_charm_inventory(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description="diff.py -- charm-inventory")
     ap.add_argument("code_facts", type=Path, help="code-facts.json")
     ap.add_argument("doc_claims", type=Path, help="doc-claims.json")
     ap.add_argument(
@@ -256,6 +361,7 @@ def main(argv: list[str]) -> int:
         help="committed JSON list of known-retired charm names "
         "(array of strings, or {\"retired\": [...]})); omit if none exists",
     )
+    ap.add_argument("--check", choices=[CHECK_CHARM_INVENTORY], default=CHECK_CHARM_INVENTORY)
     args = ap.parse_args(argv)
 
     code_data = load_json(args.code_facts, "code-facts.json")
@@ -287,7 +393,7 @@ def main(argv: list[str]) -> int:
         skipped["phantom_charm_candidates"]["note"] = retired_skip_note
 
     output = {
-        "check": CHECK,
+        "check": CHECK_CHARM_INVENTORY,
         "findings": {
             KIND_UNDOCUMENTED: undocumented,
             KIND_PHANTOM: phantom,
@@ -305,6 +411,50 @@ def main(argv: list[str]) -> int:
 
     print(json.dumps(output, indent=2, sort_keys=False))
     return 0
+
+
+def main_deploy_register(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description="diff.py -- deploy-register")
+    ap.add_argument("doc_claims", type=Path, help="doc-claims.json (deploy-register claims)")
+    ap.add_argument("--check", choices=[CHECK_DEPLOY_REGISTER], default=CHECK_DEPLOY_REGISTER)
+    args = ap.parse_args(argv)
+
+    doc_data = load_json(args.doc_claims, "doc-claims.json")
+    doc_claims = doc_data.get("claims", [])
+
+    try:
+        unregistered, skip_fragment = build_unregistered_deployed_findings(doc_claims)
+    except SubjectEmptyError as exc:
+        sys.exit(f"error: {exc}")
+
+    deploy_count = sum(1 for c in doc_claims if c["kind"] == "deploy-instruction")
+    register_count = sum(1 for c in doc_claims if c["kind"] == "register-entry")
+
+    output = {
+        "check": CHECK_DEPLOY_REGISTER,
+        "findings": {
+            KIND_UNREGISTERED_DEPLOYED: unregistered,
+        },
+        "skipped": skip_fragment,
+        "counts": {
+            "deploy_instructions": deploy_count,
+            "register_entries": register_count,
+            "unregistered_deployed_charm_findings": len(unregistered),
+        },
+    }
+
+    print(json.dumps(output, indent=2, sort_keys=False))
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--check", choices=[CHECK_CHARM_INVENTORY, CHECK_DEPLOY_REGISTER], default=CHECK_CHARM_INVENTORY)
+    pre_args, _ = pre.parse_known_args(argv)
+
+    if pre_args.check == CHECK_DEPLOY_REGISTER:
+        return main_deploy_register(argv)
+    return main_charm_inventory(argv)
 
 
 if __name__ == "__main__":

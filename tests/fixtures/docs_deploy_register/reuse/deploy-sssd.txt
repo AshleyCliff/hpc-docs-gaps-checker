@@ -1,0 +1,5 @@
+First, use `juju deploy`{l=shell} to deploy SSSD in your `slurm` model:
+
+```
+juju deploy sssd --base ubuntu@26.04 --channel latest/edge
+```
