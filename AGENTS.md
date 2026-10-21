@@ -335,11 +335,46 @@ Settled so far:
 
 | Check | Spec | Status |
 |---|---|---|
-| `charm-inventory` | `specs/charm-inventory.md` | the first end-to-end slice |
+| `charm-inventory` | `specs/charm-inventory.md` | implemented — the first end-to-end slice |
+| `deploy-register` | `specs/deploy-register-consistency.md` | implemented 2026-10-21 — 8 findings |
 | finding ID derivation | `specs/finding-ids.md` | near-frozen — changing it invalidates `.driftignore` |
 
 **Beyond those, still open.** Which further checks exist, what each parses, and how
 facts are matched are open decisions. Do not treat any earlier sketch as settled.
+
+### What the second check established
+
+`deploy-register` is the first check to **reuse** the plumbing rather than create
+it, so its conventions are now the pattern for the third:
+
+- **One extractor per concern, selected by `--check`.** `doc_claims.py`, `diff.py`
+  and `render.py` each take `--check <name>`, defaulting to `charm-inventory` so
+  existing invocations are unchanged. Do **not** fork an extractor per check.
+- **Per-check intermediates, suffixed:** `doc-claims-<check>.json`,
+  `deltas-<check>.json`. These are gitignored by glob — an exact-name list
+  silently commits a new check's files, which has already happened once.
+- **Per-check run directories:** `run-<date>-<sha8>-<check>/`, so two checks' runs
+  sit side by side instead of overwriting. `charm-inventory` keeps the unsuffixed
+  form for continuity.
+- **Shared parsers get their own module.** `csv_table.py` parses `csv-table`
+  bodies and will be inherited by the config-options and actions checks. A parser
+  used twice does not belong inlined in one extractor.
+- **A check need not have a code side.** `deploy-register` compares two facts that
+  both live in the docs, so `diff.py` takes one positional file where
+  `charm-inventory` takes two. Not every check is code-versus-docs.
+
+### Gate before implementing
+
+Each spec's Step 0 is a gate with the authority to halt, and it has now earned its
+cost twice over. On 2026-10-21 the cheap `deploy-register` gate reported **eight**
+unregistered charms where the spec predicted seven — flagged the divergence instead
+of quietly matching the spec, and was right. The eighth, `lustre-server`, is the
+only Core-owned charm of the eight and so the highest-value finding of the set.
+
+The lesson for prompt design: **instruct the agent to report a divergence rather
+than reconcile it.** A spec is a hypothesis about the pinned tree, and a cheap gate
+run is how you find out it was wrong before paying for an implementation built on
+it.
 
 What is settled is the shape every extractor must fit:
 
@@ -490,7 +525,37 @@ work that reads inputs to the container.
 
 #### The invocation pattern
 
-Pass a **committed prompt file**, and **tee the output to a log**:
+**Prefer `run-agent.sh`.** It takes a committed prompt file and a timeout:
+
+```console
+$ ./run-agent.sh prompts/deploy-register.md 2700
+```
+
+It earns the preference by adding two things the hand-written form below lacks:
+**`timeout --foreground`** and **stdin from `/dev/null`**, which together prevent
+`workshop run` being suspended by a TTY signal before it spawns anything. A
+suspended process does not act on `SIGTERM` until it resumes, so this failure looks
+exactly like the startup stall and wedges indefinitely.
+
+On 2026-10-21 the wrapper reached the model on 3 of 3 attempts while the
+hand-written form below stalled on 2 of 2. **That is far too small a sample to
+claim a cause** — and the hand-written form has worked for dozens of runs — but the
+mechanism is real and documented in `OPEN-ISSUE-opencode-startup-stall.md`, and
+preferring the wrapper costs nothing.
+
+For a long run, detach it so it survives a closed terminal:
+
+```console
+$ setsid nohup ./run-agent.sh prompts/deploy-register.md 2700 \
+    > findings/run-logs/detached.log 2>&1 < /dev/null & disown
+```
+
+Be aware the wrapper's `timeout` **will kill a productive run** when it expires —
+this happened once at 45 minutes, discarding work that was one deliverable from
+done. Size the timeout to the task, generously.
+
+The canonical hand-written form, for reference and for when the wrapper is not
+suitable:
 
 ```console
 $ workshop run docs-audit -- agent "$(cat prompts/charm-inventory.md)" 2>&1 \
@@ -506,6 +571,30 @@ Every part of that earns its place:
 | `2>&1` | OpenCode writes some diagnostics to stderr — **including permission refusals**, which are the single most useful line when an unattended run halts. A stdout-only redirect loses them. |
 | `tee`, not `>` | Keeps the run visible live while still capturing it. |
 | Timestamped filename | Runs are compared against each other; one overwritten log is one lost comparison. |
+
+Note that a host-side agent cannot issue this form at all: Zed's terminal rejects
+`$(...)` outright. That is the other reason `run-agent.sh` exists — it reaches the
+same result without command substitution in the caller's command line.
+
+#### Diagnosing a quiet run
+
+Three signals, and **no single one is sufficient**:
+
+| Signal | How to read it |
+|---|---|
+| `POST /api/v1/chat/completions` in `findings/run-logs/proxy.log` | Arriving → reached the model. Only `CONNECT models.opencode.ai` → catalogue fetch, never got further. |
+| CPU time, **sampled twice 20–25s apart** | Rising → working. Frozen → wedged. One sample cannot tell these apart, and reading a single sample as progress has already caused one misdiagnosis. |
+| Files written in the last few minutes | Requests arriving but nothing written for 10+ minutes → looping. `doom_loop` is `allow`, so a loop will not self-halt. |
+
+**Rule out the impostors before concluding "stall."** Two different failures
+present identically, and both were misread as the stall by an agent that had read
+the issue file:
+
+- `grep auto-rejecting` the transcript — a permission refusal ends the session
+  while `workshop run` still exits 0. Check this *first*, because a refused run
+  does write `opencode.log` and so passes the next test.
+- Was `opencode.log` written at all? If not, OpenCode never started: an environment
+  fault, not a stall.
 
 **No `$` prompt character when pasting.** The `console` blocks in this file show a
 shell prompt for legibility. Copying it verbatim into a shell is an error, and has
@@ -802,13 +891,19 @@ requires:
   auto-rejects in an unattended `opencode run` and the task halts. This is
   OpenCode's own safeguard, not Workshop's, and the container boundary does not
   disable it. `opencode.json` therefore sets `external_directory` to `allow` for
-  `/inputs/**` and `edit` to `deny` for the same path — a fourth read-only layer,
-  and the only one that stops the agent *before* a write is attempted. Host-side
-  agents remain a separate matter; see
+  `/inputs/**`, `/tmp/**`, `/etc/**` and `/proc/**`, and `edit` to `deny` for
+  `/inputs/**` — a fourth read-only layer, and the only one that stops the agent
+  *before* a write is attempted. Host-side agents remain a separate matter; see
   [What `read-only: true` does and does not cover](#what-read-only-true-does-and-does-not-cover).
   Note the asymmetry that caused the first failure: shell commands reading
   `/inputs` succeeded, while a `read` of a specific file was refused. The gate is
   per-tool, so "some reads worked" is not evidence that reads are permitted.
+
+  **`/etc` and `/proc` are on that list because an agent orients itself.** On
+  2026-10-21 a run that had worked productively for 13 minutes halted outright on
+  `cat /etc/hostname` — ordinary environment curiosity, auto-rejected, session
+  over. Enumerate the paths a reasonable agent will touch, rather than discovering
+  them one halted run at a time. Reads only: `edit` stays denied for `/inputs/**`.
 - **An object-syntax permission should carry an explicit catch-all.** Write
   `edit: { "*": "allow", "/inputs/**": "deny" }` rather than the deny alone; rules
   are evaluated by pattern match with the last match winning, and relying on the
