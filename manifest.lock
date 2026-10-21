@@ -6,43 +6,43 @@
       "name": "docs",
       "repo": "canonical/charmed-hpc-docs",
       "kind": "docs",
-      "sha": "ee09c39e77bc42e830d31427df535e61f7608ef8"
+      "sha": "746aa2baf6922819e35cd9600624cb61bbe8519a"
     },
     {
       "name": "slurm-charms",
       "repo": "canonical/slurm-charms",
       "kind": "charm-monorepo",
-      "sha": "cf74cd08109b8e31a251e9152a59093772a31cb2"
+      "sha": "c80ca6f25b228ac1507e3b703833c0c3639f9b8c"
     },
     {
       "name": "filesystem-charms",
       "repo": "canonical/filesystem-charms",
       "kind": "charm-monorepo",
-      "sha": "2db19f2ecbfc7b71b9f8d81956db520f389d8d6c"
+      "sha": "7f706b40228a136bad15e6d9528c6942d09ca763"
     },
     {
       "name": "sssd-operator",
       "repo": "canonical/sssd-operator",
       "kind": "charm",
-      "sha": "33ba6eac7ebb43db1b06d184345c20d1618f66e1"
+      "sha": "3b944e327fb22bbc5a4c2b15cbcb80359754bc3d"
     },
     {
       "name": "apptainer-operator",
       "repo": "canonical/apptainer-operator",
       "kind": "charm",
-      "sha": "30441f1bfe0bd8c1ad8c4bdc62e33319ada926a4"
+      "sha": "8f8af3805160c376853ddf2f9039d9af5b793fba"
     },
     {
       "name": "slurmutils",
       "repo": "canonical/slurmutils",
       "kind": "library",
-      "sha": "545c15cbff7ce21dffa95b2d968a5dac29cf5b58"
+      "sha": "ea29e57a12807d72a2645a669aa8990860bfde7a"
     },
     {
       "name": "charmed-hpc-libs",
       "repo": "canonical/charmed-hpc-libs",
       "kind": "library",
-      "sha": "bb3fbab047556728d3c3b509c8311ec7f7b1d2e4"
+      "sha": "238d24f5199f7cf9b0c66bce5944d1f96655b621"
     },
     {
       "name": "charmed-hpc-terraform",
